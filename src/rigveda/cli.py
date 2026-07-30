@@ -143,9 +143,22 @@ def main() -> None:
     cmd_search = commands.add_parser("search", help="Search indexed files.")
     cmd_search.add_argument("question"); cmd_search.add_argument("--limit", type=int, default=5)
     cmd_ask = commands.add_parser("ask", help="Ask a local Ollama model about indexed files.")
+    cmd_serve = commands.add_parser("serve", help="Run the local browser chat interface.")
+    cmd_serve.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
+    cmd_serve.add_argument("--port", type=int, default=8000)
+    cmd_serve.add_argument("--limit", type=int, default=5)
+    cmd_serve.add_argument("--model", default="qwen3:4b")
+    cmd_serve.add_argument("--ollama", default="http://localhost:11434")
     cmd_ask.add_argument("question"); cmd_ask.add_argument("--limit", type=int, default=5)
     cmd_ask.add_argument("--model", default="qwen3:4b"); cmd_ask.add_argument("--ollama", default="http://localhost:11434")
-    args, db = parser.parse_args(), db_path(parser.parse_args().db)
+    args = parser.parse_args()
+    db = db_path(args.db)
+    if args.command == "serve":
+        if args.host not in {"127.0.0.1", "localhost", "::1"}:
+            print("Warning: this server has no authentication. Do not expose it to an untrusted network.", file=sys.stderr)
+        from .server import ServerConfig, run_server
+        run_server(ServerConfig(db, args.model, args.ollama, args.limit), args.host, args.port)
+        return
     if args.command == "index":
         updated, skipped = index(db, args.paths)
         print(f"Index complete: {updated} updated, {skipped} unchanged or skipped. Database: {db}")

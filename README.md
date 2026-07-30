@@ -34,6 +34,16 @@ rigveda ask "Summarize the project proposal and cite the source file."
 
 `ask` sends retrieved excerpts only to Ollama at `http://localhost:11434`; with normal Ollama setup this remains on your computer. Select another local model with `--model MODEL`.
 
+## Browser chat interface
+
+With files indexed and Ollama running, start the local chat server:
+
+```bash
+rigveda serve
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser. The interface shows source file paths below each answer. The server binds to your computer only by default; it has no login, so do not expose it to an untrusted network. Use `--port 8080` to choose a different port.
+
 ## Supported files
 
 Text, Markdown, JSON, YAML, CSV, and common source-code files work with no extra packages. Hidden directories plus dependency/build folders are skipped.
