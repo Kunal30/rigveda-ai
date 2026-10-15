@@ -3,38 +3,66 @@
   <defs>
     <clipPath id="tile"><rect width="512" height="512" rx="112"/></clipPath>
     <radialGradient id="night" cx="50%" cy="35%" r="75%"><stop offset="0" stop-color="#2a2160"/><stop offset="1" stop-color="#0c0a22"/></radialGradient>
-    <radialGradient id="halo" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#ffd27a" stop-opacity=".95"/><stop offset=".7" stop-color="#f6a63a" stop-opacity=".55"/><stop offset="1" stop-color="#f6a63a" stop-opacity="0"/></radialGradient>
-    <linearGradient id="robe" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffa03a"/><stop offset="1" stop-color="#e0581a"/></linearGradient>
-    <linearGradient id="drape" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f07a22"/><stop offset="1" stop-color="#c8461a"/></linearGradient>
-    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d9a174"/><stop offset="1" stop-color="#bf845a"/></linearGradient>
-    <linearGradient id="hair" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#d9d3ca"/></linearGradient>
-    <radialGradient id="bead" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#b9774a"/><stop offset=".6" stop-color="#6e3a1c"/><stop offset="1" stop-color="#3f1f0e"/></radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#ffd27a"/><stop offset=".75" stop-color="#f6a63a" stop-opacity=".8"/><stop offset="1" stop-color="#f6a63a" stop-opacity="0"/></radialGradient>
+    <g id="sidehair"><path d="M204 150 C168 168 160 226 162 286 C163 326 150 356 132 394 L164 380 L166 412 L190 380 L198 404 L212 340 L214 220 Z" fill="#d9d1c5"/>
+      <path d="M182 230 C180 280 172 330 158 372 M196 250 C196 300 192 340 182 384" fill="none" stroke="#bdb3a5" stroke-width="3" stroke-linecap="round"/></g>
+    <g id="brow"><path d="M248 200 C236 184 210 176 172 186 C190 188 198 190 204 194 C190 194 180 198 170 208 C196 198 224 200 248 208 Z" fill="#ffffff"/></g>
+    <g id="moustache"><path d="M256 280 C240 270 218 270 202 284 C190 296 172 296 160 282 C170 306 198 314 222 302 C238 294 250 292 256 294 Z" fill="#ffffff"/></g>
+    <g id="earring"><circle cx="184" cy="256" r="9" fill="none" stroke="#f6c45a" stroke-width="5"/></g>
   </defs>
   <g clip-path="url(#tile)">
     <rect width="512" height="512" fill="url(#night)"/>
-    <circle cx="256" cy="222" r="172" fill="url(#halo)"/>
-    <!-- robe and shoulder drape -->
-    <path d="M60 512 C66 410 150 360 256 358 C362 360 446 410 452 512 Z" fill="url(#robe)"/>
-    <path d="M118 392 C190 360 300 420 372 512 L300 512 C250 452 180 420 96 420 Z" fill="url(#drape)"/>
-    <!-- neck, ears, face -->
-    <rect x="226" y="290" width="60" height="80" rx="20" fill="#bf845a"/>
-    <ellipse cx="183" cy="240" rx="13" ry="22" fill="#c68b60"/>
-    <ellipse cx="329" cy="240" rx="13" ry="22" fill="#c68b60"/>
-    <ellipse cx="256" cy="232" rx="74" ry="88" fill="url(#skin)"/>
-    <!-- mala of rudraksha beads -->
-    <circle cx="176.0" cy="372.0" r="11.5" fill="url(#bead)"/><circle cx="182.6" cy="386.8" r="11.5" fill="url(#bead)"/><circle cx="189.6" cy="401.2" r="11.5" fill="url(#bead)"/><circle cx="197.4" cy="415.5" r="11.5" fill="url(#bead)"/><circle cx="205.9" cy="429.2" r="11.5" fill="url(#bead)"/><circle cx="215.6" cy="442.0" r="11.5" fill="url(#bead)"/><circle cx="226.9" cy="453.5" r="11.5" fill="url(#bead)"/><circle cx="240.4" cy="462.4" r="11.5" fill="url(#bead)"/><circle cx="256.0" cy="466.0" r="11.5" fill="url(#bead)"/><circle cx="271.6" cy="462.4" r="11.5" fill="url(#bead)"/><circle cx="285.1" cy="453.5" r="11.5" fill="url(#bead)"/><circle cx="296.4" cy="442.0" r="11.5" fill="url(#bead)"/><circle cx="306.1" cy="429.2" r="11.5" fill="url(#bead)"/><circle cx="314.6" cy="415.5" r="11.5" fill="url(#bead)"/><circle cx="322.4" cy="401.2" r="11.5" fill="url(#bead)"/><circle cx="329.4" cy="386.8" r="11.5" fill="url(#bead)"/><circle cx="336.0" cy="372.0" r="11.5" fill="url(#bead)"/>
-    <!-- hair and topknot -->
-    <ellipse cx="256" cy="116" rx="36" ry="30" fill="url(#hair)"/>
-    <rect x="232" y="132" width="48" height="12" rx="6" fill="#e0731b"/>
-    <path d="M180 236 C172 162 212 140 256 140 C300 140 340 162 332 236 C320 196 296 176 256 174 C216 176 192 196 180 236 Z" fill="url(#hair)"/>
-    <!-- beard and moustache -->
-    <path d="M184 238 C186 300 206 350 228 392 C238 414 256 436 256 436 C256 436 274 414 284 392 C306 350 326 300 328 238 C318 284 296 300 256 300 C216 300 194 284 184 238 Z" fill="url(#hair)"/>
-    <path d="M256 276 C238 268 214 272 204 292 C222 286 240 290 256 296 C272 290 290 286 308 292 C298 272 274 268 256 276 Z" fill="#f2eee8"/>
-    <!-- closed, meditating eyes and brows -->
-    <path d="M212 232 Q227 242 242 232 M270 232 Q285 242 300 232" fill="none" stroke="#4a2a18" stroke-width="5" stroke-linecap="round"/>
-    <path d="M206 212 Q226 200 244 210 M268 210 Q286 200 306 212" fill="none" stroke="#f4f0ea" stroke-width="9" stroke-linecap="round"/>
-    <!-- tilak -->
-    <path d="M256 166 L256 196" stroke="#f5f1ea" stroke-width="6" stroke-linecap="round"/>
-    <circle cx="256" cy="206" r="6" fill="#d7261e"/>
+    <polygon points="452.0,214.0 404.7,233.6 445.3,264.7 394.6,271.4 425.7,312.0 375.0,305.3 394.6,352.6 347.3,333.0 354.0,383.7 313.4,352.6 306.7,403.3 275.6,362.7 256.0,410.0 236.4,362.7 205.3,403.3 198.6,352.6 158.0,383.7 164.7,333.0 117.4,352.6 137.0,305.3 86.3,312.0 117.4,271.4 66.7,264.7 107.3,233.6 60.0,214.0 107.3,194.4 66.7,163.3 117.4,156.6 86.3,116.0 137.0,122.7 117.4,75.4 164.7,95.0 158.0,44.3 198.6,75.4 205.3,24.7 236.4,65.3 256.0,18.0 275.6,65.3 306.7,24.7 313.4,75.4 354.0,44.3 347.3,95.0 394.6,75.4 375.0,122.7 425.7,116.0 394.6,156.6 445.3,163.3 404.7,194.4" fill="#f39a33" opacity=".7"/>
+    <circle cx="256" cy="214" r="148" fill="url(#glow)"/>
+
+    <!-- long hair falling behind the shoulders -->
+    <use href="#sidehair"/><use href="#sidehair" transform="translate(512 0) scale(-1 1)"/>
+
+    <!-- robe with sharp folds -->
+    <path d="M52 512 C58 408 150 360 256 358 C362 360 454 408 460 512 Z" fill="#f98e2a"/>
+    <path d="M378 398 C414 420 438 456 446 512 L428 512 C420 466 400 432 364 408 Z" fill="#ffb35c"/>
+    <path d="M150 402 L196 512 L160 512 Z M352 410 L322 512 L350 512 Z" fill="#dd6a1c"/>
+    <path d="M104 412 C196 368 322 428 396 512 L318 512 C262 452 190 428 96 442 Z" fill="#c9501a"/>
+    <path d="M124 418 C200 392 290 430 344 486" fill="none" stroke="#e0661f" stroke-width="5" stroke-linecap="round"/>
+
+    <rect x="228" y="290" width="56" height="84" rx="18" fill="#b8784e"/>
+    <circle cx="172.0" cy="372.0" r="12" fill="#6e3a1c"/><circle cx="168.5" cy="368.0" r="4" fill="#b9774a"/><circle cx="178.9" cy="387.3" r="12" fill="#6e3a1c"/><circle cx="175.4" cy="383.3" r="4" fill="#b9774a"/><circle cx="186.4" cy="402.3" r="12" fill="#6e3a1c"/><circle cx="182.9" cy="398.3" r="4" fill="#b9774a"/><circle cx="194.5" cy="417.0" r="12" fill="#6e3a1c"/><circle cx="191.0" cy="413.0" r="4" fill="#b9774a"/><circle cx="203.6" cy="431.2" r="12" fill="#6e3a1c"/><circle cx="200.1" cy="427.2" r="4" fill="#b9774a"/><circle cx="213.7" cy="444.5" r="12" fill="#6e3a1c"/><circle cx="210.2" cy="440.5" r="4" fill="#b9774a"/><circle cx="225.7" cy="456.4" r="12" fill="#6e3a1c"/><circle cx="222.2" cy="452.4" r="4" fill="#b9774a"/><circle cx="239.7" cy="465.3" r="12" fill="#6e3a1c"/><circle cx="236.2" cy="461.3" r="4" fill="#b9774a"/><circle cx="256.0" cy="469.0" r="12" fill="#6e3a1c"/><circle cx="252.5" cy="465.0" r="4" fill="#b9774a"/><circle cx="272.3" cy="465.3" r="12" fill="#6e3a1c"/><circle cx="268.8" cy="461.3" r="4" fill="#b9774a"/><circle cx="286.3" cy="456.4" r="12" fill="#6e3a1c"/><circle cx="282.8" cy="452.4" r="4" fill="#b9774a"/><circle cx="298.3" cy="444.5" r="12" fill="#6e3a1c"/><circle cx="294.8" cy="440.5" r="4" fill="#b9774a"/><circle cx="308.4" cy="431.2" r="12" fill="#6e3a1c"/><circle cx="304.9" cy="427.2" r="4" fill="#b9774a"/><circle cx="317.5" cy="417.0" r="12" fill="#6e3a1c"/><circle cx="314.0" cy="413.0" r="4" fill="#b9774a"/><circle cx="325.6" cy="402.3" r="12" fill="#6e3a1c"/><circle cx="322.1" cy="398.3" r="4" fill="#b9774a"/><circle cx="333.1" cy="387.3" r="12" fill="#6e3a1c"/><circle cx="329.6" cy="383.3" r="4" fill="#b9774a"/><circle cx="340.0" cy="372.0" r="12" fill="#6e3a1c"/><circle cx="336.5" cy="368.0" r="4" fill="#b9774a"/>
+
+    <!-- ears, earrings, face -->
+    <ellipse cx="186" cy="230" rx="14" ry="24" fill="#c3825a"/><ellipse cx="326" cy="230" rx="14" ry="24" fill="#c3825a"/>
+    <use href="#earring"/><use href="#earring" transform="translate(512 0) scale(-1 1)"/>
+    <path d="M198 176 C198 140 222 128 256 128 C290 128 314 140 314 176 L322 242 C322 282 298 308 256 308 C214 308 190 282 190 242 Z" fill="#d49b6e"/>
+    <path d="M190 242 C192 274 212 300 240 306 C214 290 200 270 196 236 Z" fill="#c3855a"/>
+    <circle cx="214" cy="252" r="14" fill="#e3876a" opacity=".55"/><circle cx="298" cy="252" r="14" fill="#e3876a" opacity=".55"/>
+
+    <!-- forehead: wrinkles and ash tripundra with a red dot -->
+    <path d="M226 160 Q256 152 286 160" fill="none" stroke="#bf8259" stroke-width="3" stroke-linecap="round"/>
+    <path d="M224 172 Q256 164 288 172 M222 182 Q256 174 290 182 M224 192 Q256 184 288 192" fill="none" stroke="#fbf7f0" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="256" cy="182" r="6.5" fill="#d7261e"/>
+
+    <!-- closed, smiling eyes with crow's feet -->
+    <path d="M206 222 Q222 236 238 222 M274 222 Q290 236 306 222" fill="none" stroke="#4a2716" stroke-width="5" stroke-linecap="round"/>
+    <path d="M200 220 L190 214 M200 226 L190 228 M312 220 L322 214 M312 226 L322 228" fill="none" stroke="#a9673f" stroke-width="3" stroke-linecap="round"/>
+
+    <!-- big caricature nose -->
+    <path d="M250 204 C250 226 236 242 238 254 C242 268 270 268 274 254 C276 242 262 226 262 204 Z" fill="#c07a4c"/>
+    <circle cx="256" cy="254" r="18" fill="#cd8a5c"/>
+    <ellipse cx="263" cy="246" rx="6" ry="4" fill="#e6b088"/>
+
+    <!-- topknot and front hair -->
+    <path d="M256 46 C234 46 220 66 223 90 C212 98 210 118 222 132 L290 132 C302 118 300 98 289 90 C292 66 278 46 256 46 Z" fill="#f2ede5"/>
+    <path d="M244 60 C236 74 238 92 246 104 M266 58 C276 72 276 92 268 106 M232 100 C230 112 234 122 240 128 M280 100 C282 112 278 122 272 128" fill="none" stroke="#cbc2b4" stroke-width="3" stroke-linecap="round"/>
+    <path d="M226 118 H286 L282 134 H230 Z" fill="#e0731b"/>
+    <path d="M188 204 C182 154 212 126 256 126 C300 126 330 154 324 204 C312 168 290 150 256 148 C222 150 200 168 188 204 Z" fill="#f2ede5"/>
+    <path d="M208 160 C220 144 238 138 252 138 M304 160 C292 144 274 138 260 138" fill="none" stroke="#cbc2b4" stroke-width="3" stroke-linecap="round"/>
+
+    <use href="#brow"/><use href="#brow" transform="translate(512 0) scale(-1 1)"/>
+
+    <!-- long pointed beard in layered locks with strands -->
+    <path d="M192 262 C186 320 202 360 214 392 L226 382 L230 432 L246 404 L256 462 L266 404 L282 432 L286 382 L298 392 C310 360 326 320 320 262 Z" fill="#d6cec2"/>
+    <path d="M198 264 C198 314 212 352 224 382 L234 372 L240 414 L250 392 L256 438 L262 392 L272 414 L278 372 L288 382 C300 352 314 314 314 264 C304 296 286 304 256 304 C226 304 208 296 198 264 Z" fill="#f6f2ec"/>
+    <path d="M218 312 C222 340 230 362 238 384 M236 316 C238 346 244 372 250 400 M256 318 L256 420 M276 316 C274 346 268 372 262 400 M294 312 C290 340 282 362 274 384" fill="none" stroke="#cdc4b6" stroke-width="3" stroke-linecap="round"/>
+
+    <g transform="translate(0 4)"><use href="#moustache"/><use href="#moustache" transform="translate(512 0) scale(-1 1)"/></g>
   </g>
 </svg>
