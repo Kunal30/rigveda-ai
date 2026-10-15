@@ -59,8 +59,8 @@ def index_file(con: sqlite3.Connection, path: Path, config: Config, log: Log = _
     """Index one file. Returns "updated", "unchanged" or "skipped"."""
     try:
         stat = path.stat()
-        known = con.execute("SELECT modified_ns, size FROM documents WHERE path=?", (str(path),)).fetchone()
-        if known and tuple(known) == (stat.st_mtime_ns, stat.st_size):
+        known = con.execute("SELECT modified_ns, size, version FROM documents WHERE path=?", (str(path),)).fetchone()
+        if known and tuple(known) == (stat.st_mtime_ns, stat.st_size, extract.version(path)):
             return "unchanged"
         kind = extract.kind(path)
         if kind in SLOW_KINDS:
@@ -74,8 +74,8 @@ def index_file(con: sqlite3.Connection, path: Path, config: Config, log: Log = _
         return "skipped"
     with con:
         remove_document(con, str(path))
-        con.execute("INSERT INTO documents(path, modified_ns, size, indexed_at, kind) VALUES (?, ?, ?, ?, ?)",
-                    (str(path), stat.st_mtime_ns, stat.st_size, int(time.time()), kind))
+        con.execute("INSERT INTO documents(path, modified_ns, size, indexed_at, kind, version) VALUES (?, ?, ?, ?, ?, ?)",
+                    (str(path), stat.st_mtime_ns, stat.st_size, int(time.time()), kind, extract.version(path)))
         ordinal = 0
         for segment in segments:
             for chunk in chunks(segment.text):

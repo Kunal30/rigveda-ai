@@ -67,3 +67,17 @@ def test_cite_formats() -> None:
 
 def test_chunks_overlap() -> None:
     assert len(chunks("alpha " * 400, size=100, overlap=20)) > 1
+
+
+def test_improved_extractor_rereads_only_that_kind(tmp_path: Path, config, monkeypatch) -> None:
+    from rigveda import extract
+
+    source = tmp_path / "notes"
+    source.mkdir()
+    (source / "a.txt").write_text("alpha")
+    (source / "b.md").write_text("beta")
+    index_paths(config.database_path, [str(source)], config)
+    kind, reader, _ = extract.REGISTRY[".txt"]
+    monkeypatch.setitem(extract.REGISTRY, ".txt", (kind, reader, "2"))
+    stats = index_paths(config.database_path, [str(source)], config)
+    assert (stats.updated, stats.unchanged) == (1, 1)

@@ -104,6 +104,7 @@ A file watcher (`watchdog`) re-indexes changed files in the background.
 | 3. Facts profile | extraction + review page | name, DOB, address, IDs appear for approval with their source |
 | 4. Form autofill | `/suggest` with token auth + Chrome extension | a test form gets correct suggestions accepted with Tab |
 | 5. Writing help | grounded completions in text areas; optional desktop hotkey popup | |
+| 6. All your devices | Tailscale private network + token login; installable mobile web app; open source files from the phone; Siri Shortcut for voice questions | ask a question from the iPhone away from home |
 
 ## Models to pull
 

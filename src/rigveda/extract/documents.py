@@ -6,9 +6,11 @@ import sys
 from pathlib import Path
 
 from . import ExtractionError, Segment
+from .pdf_layout import page_text
 from .. import llm
 
 MAX_SHEET_ROWS = 5000
+VERSIONS = {"pdf": "2"}  # 2: text rebuilt in visual reading order (filled-in forms)
 SCANNED_PAGE_CHARS = 25  # pages with less text than this are treated as scans
 
 
@@ -24,7 +26,7 @@ def read_pdf(path: Path, config) -> list[Segment]:
     segments, ocr_failed = [], False
     with fitz.open(path) as document:
         for number, page in enumerate(document, start=1):
-            text = page.get_text()
+            text = page_text(page)
             if len(text.strip()) < SCANNED_PAGE_CHARS and page.get_images() and not ocr_failed:
                 try:
                     image = page.get_pixmap(dpi=150).tobytes("png")

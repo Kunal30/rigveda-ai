@@ -22,13 +22,13 @@ class ExtractionError(Exception):
 Extractor = Callable[[Path, Config], list[Segment]]
 
 
-def _registry() -> dict[str, tuple[str, Extractor]]:
+def _registry() -> dict[str, tuple[str, Extractor, str]]:
     from . import documents, images, media, text
 
-    table: dict[str, tuple[str, Extractor]] = {}
+    table: dict[str, tuple[str, Extractor, str]] = {}
     for module in (text, documents, images, media):
         for suffix, kind, extractor in module.EXTRACTORS:
-            table[suffix] = (kind, extractor)
+            table[suffix] = (kind, extractor, getattr(module, "VERSIONS", {}).get(kind, "1"))
     return table
 
 
@@ -41,6 +41,11 @@ def supported(path: Path) -> bool:
 
 def kind(path: Path) -> str:
     return REGISTRY[path.suffix.lower()][0]
+
+
+def version(path: Path) -> str:
+    """Bumped when a kind's extraction improves, so already-indexed files are read again."""
+    return REGISTRY[path.suffix.lower()][2]
 
 
 def extract(path: Path, config: Config) -> list[Segment]:

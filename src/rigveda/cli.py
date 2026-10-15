@@ -28,8 +28,23 @@ def folders_command(args, config: configuration.Config) -> None:
             config.folders.remove(folder)
     path = configuration.save(config)
     print(f"Saved {path}. Watched folders:\n" + ("\n".join(config.folders) or "(none)"))
-    if args.action == "remove":
+    if restart_service():
+        print("Restarted the background watcher (rigveda.service) with the new folders.")
+    elif args.action == "remove":
         print("Run `rigveda index` to drop their files from the index.")
+
+
+def restart_service() -> bool:
+    """Restart the systemd user service, if installed, so it watches the updated folders."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("systemctl"):
+        return False
+    enabled = subprocess.run(["systemctl", "--user", "is-enabled", "rigveda.service"], capture_output=True, text=True)
+    if enabled.stdout.strip() != "enabled":
+        return False
+    return subprocess.run(["systemctl", "--user", "restart", "rigveda.service"], capture_output=True).returncode == 0
 
 
 def status_command(db: Path, config: configuration.Config) -> None:
@@ -85,7 +100,11 @@ def main() -> None:
     if args.command in {"index", "watch"}:
         paths = getattr(args, "paths", None) or config.folders
         if not paths:
-            raise SystemExit("No folders to index. Add one with `rigveda folders add PATH`, or pass paths.")
+            message = "No folders to index. Add one with `rigveda folders add PATH`, or pass paths."
+            if args.command == "watch":  # exit cleanly so the background service doesn't restart in a loop
+                print(message, file=sys.stderr)
+                return
+            raise SystemExit(message)
         if args.command == "watch":
             from .watch import watch
             watch(db, paths, config)
