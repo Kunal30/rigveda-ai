@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import re
@@ -11,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import facts
+from . import facts, suggest
 from .config import Config
 from .llm import OllamaError, ask
 from .search import cite, search
@@ -99,6 +100,41 @@ load().then(()=>{for(const[k,label]of Object.entries(keys))select.append(new Opt
 </script></body></html>"""
 
 
+TEST_FORM_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rigveda AI · Test form</title><style>
+body{margin:0;background:#f4f1ec;color:#1d1b2e;font:15px system-ui,sans-serif}main{max-width:720px;margin:auto;padding:28px 18px 60px}
+h1{font-size:1.5rem}p{color:#5b5870}fieldset{border:1px solid #d8d2c8;border-radius:12px;margin:18px 0;padding:14px 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+legend{font-weight:700;padding:0 6px}label{display:flex;flex-direction:column;gap:4px;font-size:.85rem;color:#3a3750}
+input,select{font:inherit;padding:8px 10px;border:1px solid #c9c2b6;border-radius:8px;background:#fff}button{font:inherit;padding:10px 18px;border-radius:10px;border:0;background:#2a2160;color:#fff;font-weight:700}
+#result{margin-top:14px;color:#a33}
+</style></head><body><main>
+<h1>Test form</h1><p>Click into a field: Rigveda suggests a value from your approved facts. <b>Tab</b> accepts, <b>Esc</b> dismisses. Or use <i>Fill this page</i> in the extension's menu. Nothing here is sent anywhere, and the extension never submits forms.</p>
+<form id="form" autocomplete="off">
+<fieldset><legend>About you</legend>
+<label>First name<input name="fname"></label><label>Last name<input name="lname"></label>
+<label>Full legal name<input id="legalName"></label><label>Date of birth<input name="dob" placeholder="MM/DD/YYYY"></label>
+<label>Birth date (calendar)<input type="date" name="birth_date"></label><label>Gender<select name="gender"><option value="">Select…</option><option>Female</option><option>Male</option><option>Other</option></select></label>
+<label>Nationality<select name="nationality"><option value="">Select…</option><option value="US">United States</option><option value="IN">India</option><option value="CA">Canada</option></select></label>
+<label>Place of birth<input name="pob"></label></fieldset>
+<fieldset><legend>Contact</legend>
+<label>Email<input type="email" name="email"></label><label>Mobile number<input name="mobile"></label></fieldset>
+<fieldset><legend>Address</legend>
+<label>Street address<input name="address1"></label><label>Apt / Suite<input name="address2"></label>
+<label>City<input name="city"></label><label>State<select name="state"><option value="">Select…</option><option value="CA">California</option><option value="OR">Oregon</option><option value="WA">Washington</option></select></label>
+<label>ZIP code<input name="zip"></label><label>Country<input name="country"></label></fieldset>
+<fieldset><legend>Documents</legend>
+<label>Passport number<input name="passportNo"></label><label>Passport expiry date<input name="passport_expiry" placeholder="DD/MM/YYYY"></label>
+<label>Driver's license number<input name="dl_number"></label></fieldset>
+<fieldset><legend>Never filled</legend>
+<label>Password<input type="password" name="password"></label><label>Card number<input name="cardnumber" autocomplete="cc-number"></label>
+<label>Father's name<input name="father"></label></fieldset>
+<button>Submit</button><div id="result"></div>
+</form>
+<script>document.querySelector('#form').addEventListener('submit',e=>{e.preventDefault();document.querySelector('#result').textContent='Submitted by you (the extension never submits). Nothing was sent.'})</script>
+</main></body></html>"""
+
+
 @dataclass(frozen=True)
 class ServerConfig:
     database: Path
@@ -106,6 +142,7 @@ class ServerConfig:
     ollama: str
     limit: int
     settings: Config | None = None  # enables meaning search
+    token: str | None = None  # the browser extension's secret; form suggestions are off without one
 
 
 def make_handler(config: ServerConfig):
@@ -157,8 +194,42 @@ def make_handler(config: ServerConfig):
                 raise ValueError("Send a JSON object.")
             return payload
 
+        def authorized(self) -> bool:
+            """Form suggestions reveal your personal details, so they need the extension's secret token."""
+            sent = self.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+            if config.token and sent and hmac.compare_digest(sent.encode(), config.token.encode()):
+                return True
+            self.respond(HTTPStatus.UNAUTHORIZED, {"error": "Missing or wrong token. Run `rigveda token` and paste it into the extension's options."})
+            return False
+
+        def suggest_post(self) -> None:
+            try:
+                fields = self.body().get("fields")
+                if not isinstance(fields, list) or not 0 < len(fields) <= 300 or not all(isinstance(f, dict) for f in fields):
+                    raise ValueError("Send 1 to 300 fields.")
+            except (ValueError, json.JSONDecodeError) as error:
+                self.respond(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                return
+            con = connect(config.database)
+            try:
+                self.respond(HTTPStatus.OK, {"results": [suggest.suggestions(con, field) for field in fields]})
+            finally:
+                con.close()
+
         def do_GET(self) -> None:
             if not self.trusted():
+                return
+            if self.path == "/api/suggest/status":
+                if self.authorized():
+                    con = connect(config.database)
+                    try:
+                        approved = len(facts.listing(con, "approved"))
+                    finally:
+                        con.close()
+                    self.respond(HTTPStatus.OK, {"ok": True, "approved": approved})
+                return
+            if self.path == "/test-form":
+                self.page(TEST_FORM_HTML)
                 return
             if self.path == "/facts":
                 self.page(FACTS_HTML)
@@ -214,6 +285,10 @@ def make_handler(config: ServerConfig):
 
         def do_POST(self) -> None:
             if not self.trusted():
+                return
+            if self.path == "/api/suggest":
+                if self.authorized():
+                    self.suggest_post()
                 return
             if self.path == "/api/facts" or re.fullmatch(r"/api/facts/\d+", self.path):
                 self.facts_post()

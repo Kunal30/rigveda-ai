@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Rigveda AI</title><style>
+body{margin:0;width:290px;background:#14112e;color:#f4f1ea;font:13px system-ui,sans-serif}
+main{padding:14px}header{display:flex;align-items:center;gap:10px;margin-bottom:12px}header img{width:36px;height:36px;border-radius:9px}
+h1{font-size:16px;margin:0;font-family:"EB Garamond",Georgia,serif;font-weight:500}#status{color:#b8b0d8;font-size:12px;margin:0 0 12px}
+#status.bad{color:#ff9b8a}button{width:100%;font:inherit;font-weight:700;padding:9px;border-radius:9px;border:0;background:#f39a33;color:#1d1300;cursor:pointer}
+button:disabled{opacity:.5;cursor:default}label{display:flex;align-items:center;gap:8px;margin:12px 0;color:#d8d2f0}
+#result{min-height:16px;color:#b8b0d8;font-size:12px;margin-top:8px}nav{display:flex;justify-content:space-between;margin-top:10px;border-top:1px solid #2a2450;padding-top:10px}
+a{color:#9db0ff;text-decoration:none}
+</style></head><body><main>
+<header><img src="icons/icon-48.png" alt=""><h1>Rigveda AI</h1></header>
+<p id="status">Checking…</p>
+<button id="fill" disabled>Fill this page</button>
+<div id="result"></div>
+<label><input type="checkbox" id="site"> Suggest on <b id="host">this site</b></label>
+<nav><a href="#" id="facts">Review your facts</a><a href="options.html" target="_blank">Options</a></nav>
+</main><script src="popup.js"></script></body></html>

@@ -1,0 +1,16 @@
+[Unit]
+Description=Rigveda AI: keep the local file index up to date
+After=default.target
+# Do nothing until folders have been chosen with `rigveda folders add`.
+ConditionPathExists=%h/.config/rigveda/config.toml
+
+[Service]
+ExecStart=%h/.local/bin/rigveda watch
+Restart=on-failure
+RestartSec=60
+# Indexing is background work; keep the desktop responsive.
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target

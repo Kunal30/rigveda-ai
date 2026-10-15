@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import tomllib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -54,3 +55,21 @@ def save(config: Config, path: Path | None = None) -> Path:
     lines = [f"{key} = {json.dumps(value)}" for key, value in asdict(config).items()]
     path.write_text("# Rigveda AI configuration\n" + "\n".join(lines) + "\n", encoding="utf-8")
     return path
+
+
+def token_path() -> Path:
+    return config_path().parent / "token"
+
+
+def load_token(renew: bool = False) -> str:
+    """The secret the browser extension sends with every request, created on first use (readable only by you)."""
+    path = token_path()
+    if path.exists() and not renew:
+        return path.read_text(encoding="utf-8").strip()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_urlsafe(32)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+        file.write(token + "\n")
+    os.chmod(path, 0o600)
+    return token

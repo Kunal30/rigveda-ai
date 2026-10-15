@@ -1,0 +1,11 @@
+[Unit]
+Description=Rigveda AI: local server for the browser chat, facts review and form extension
+After=default.target
+
+[Service]
+ExecStart=%h/.local/bin/rigveda serve
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

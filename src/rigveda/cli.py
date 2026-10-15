@@ -128,6 +128,8 @@ def main() -> None:
     cmd_facts.add_argument("--status", choices=["pending", "approved", "rejected", "all"], default="all")
     cmd_facts.add_argument("--show", action="store_true", help="Show ID numbers in full")
     cmd_facts.add_argument("--rescan", action="store_true", help="Scan every document again")
+    cmd_token = commands.add_parser("token", help="Show the secret the browser extension needs.")
+    cmd_token.add_argument("--new", action="store_true", help="Replace it (the old one stops working)")
     cmd_search = commands.add_parser("search", help="Search indexed files.")
     cmd_search.add_argument("question"); cmd_search.add_argument("--limit", type=int, default=5)
     cmd_search.add_argument("--keywords-only", action="store_true", help="Skip meaning search")
@@ -153,6 +155,12 @@ def main() -> None:
             parser.error(f"folders {args.action} needs at least one PATH")
         folders_command(args, config)
         return
+    if args.command == "token":
+        token = configuration.load_token(renew=args.new)
+        print(token)
+        print(f"Paste this into the Rigveda AI extension's options. Stored in {configuration.token_path()}"
+              + (". Restart `rigveda serve` to use the new token." if args.new else "."), file=sys.stderr)
+        return
     if args.command == "facts":
         facts_command(args, db, config)
         return
@@ -177,7 +185,8 @@ def main() -> None:
         if args.host not in {"127.0.0.1", "localhost", "::1"}:
             print("Warning: this server has no authentication. Do not expose it to an untrusted network.", file=sys.stderr)
         from .server import ServerConfig, run_server
-        run_server(ServerConfig(db, config.model, config.ollama, args.limit, config), args.host, args.port)
+        token = configuration.load_token()
+        run_server(ServerConfig(db, config.model, config.ollama, args.limit, config, token), args.host, args.port)
         return
 
     sources = search(db, args.question, args.limit, None if getattr(args, "keywords_only", False) else config)
