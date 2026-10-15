@@ -6,7 +6,7 @@ Rigveda AI is a private assistant for the files on your Ubuntu machine. You choo
 
 Nothing is uploaded. Text extraction, OCR, transcription and answers all run on your computer. It only reads the folders you add, never your whole home directory.
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for where the project is going, including browser form autofill.
+For how it fits together, read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For where it is going, see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Quick start
 
