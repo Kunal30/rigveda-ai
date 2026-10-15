@@ -39,3 +39,9 @@ def offline_models(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def config(tmp_path: Path) -> Config:
     return Config(database=str(tmp_path / "index.db"))
+
+
+@pytest.fixture(autouse=True)
+def no_fact_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fact extraction finds nothing unless a test supplies its own fake model."""
+    monkeypatch.setattr(llm, "extract_facts", lambda host, model, prompt: [])

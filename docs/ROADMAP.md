@@ -64,7 +64,7 @@ A file watcher (`watchdog`) re-indexes changed files in the background.
 ### 4. Personal facts profile
 
 - At index time, a model scans likely documents (IDs, resumes, bills, letters) and
-  extracts facts as `(key, value, source file, page, confidence)`. Examples:
+  extracts facts as `(key, value, source file, page, exact words)`; confidence is how many files agree. Examples:
   `full_name`, `date_of_birth`, `address.current`, `passport.number`, `employer`.
 - Facts stay **pending** until you approve or edit them in a review page. Only
   approved facts are suggested in forms.
@@ -88,7 +88,7 @@ A file watcher (`watchdog`) re-indexes changed files in the background.
 
 - Every request must carry a secret token, generated on first run and pasted into
   the extension. Without it, any website's JavaScript could query
-  `127.0.0.1:8000` and read your documents.
+  `127.0.0.1:8765` and read your documents.
 - CORS allows only the extension's origin. The server binds to `127.0.0.1` only.
 - Never suggest into password fields or card-number/CVV fields; per-site off switch.
 - The index database holds sensitive text: keep it under `~/.local/share/rigveda`
@@ -101,7 +101,7 @@ A file watcher (`watchdog`) re-indexes changed files in the background.
 | 0. Foundation ✅ | split `cli.py` into modules (`extract/`, `store`, `search`, `llm`); pytest; fix `.gitignore`; config file for the watched folder | tests pass, `rigveda index` behaves as before |
 | 1. Multimedia ingestion ✅ | PDF, PPTX, XLSX, images, audio and video extractors; file watcher | a video and a slide deck are searchable, with timestamp and slide citations |
 | 2. Semantic search ✅ | embeddings + hybrid ranking; better chat answers | finds the right file for a paraphrased question |
-| 3. Facts profile | extraction + review page | name, DOB, address, IDs appear for approval with their source |
+| 3. Facts profile ✅ | extraction + review page | name, DOB, address, IDs appear for approval with their source |
 | 4. Form autofill | `/suggest` with token auth + Chrome extension | a test form gets correct suggestions accepted with Tab |
 | 5. Writing help | grounded completions in text areas; optional desktop hotkey popup | |
 | 6. All your devices | Tailscale private network + token login; installable mobile web app; open source files from the phone; Siri Shortcut for voice questions | ask a question from the iPhone away from home |
