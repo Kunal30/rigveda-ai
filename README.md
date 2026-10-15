@@ -16,8 +16,9 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[all]'          # or pick extras: .[docs], .[media], .[watch]
 
-ollama pull qwen3:4b             # answers
+ollama pull qwen3:14b            # answers (qwen3:4b for smaller GPUs; set `model` in the config)
 ollama pull qwen2.5vl:7b         # reads images and scanned PDFs
+ollama pull bge-m3               # meaning search
 
 rigveda folders add ~/Documents  # choose what Rigveda knows about
 rigveda index                    # index the chosen folders
@@ -35,11 +36,17 @@ To keep the index current as files change, run `rigveda watch` instead of `rigve
 | `rigveda index [PATH…]` | Index the chosen folders, or the paths given; unchanged files are skipped and deleted files are dropped |
 | `rigveda watch [PATH…]` | Index, then keep watching for new, changed and deleted files |
 | `rigveda status` | Show how many files of each kind are indexed |
-| `rigveda search "QUESTION"` | Keyword search, with no AI model needed |
+| `rigveda search "QUESTION"` | Search by meaning and keywords (`--keywords-only` works without Ollama) |
 | `rigveda ask "QUESTION"` | Answer with the local model, citing sources |
 | `rigveda serve` | Browser chat at [http://127.0.0.1:8000](http://127.0.0.1:8000) |
 
 The index lives at `~/.local/share/rigveda/rigveda.db`, readable only by you. Use `--db PATH` before a command to use another file. Models and the Ollama address are set in the config file.
+
+## How search works
+
+Each file is split into chunks of about 1,200 characters. Every chunk is stored twice: as words, for exact matches such as names, ID numbers and amounts, and as an embedding from `bge-m3`, a list of numbers representing its meaning. A question is matched both ways, the two rankings are merged (meaning counts double), and duplicate copies of the same text are shown once. That is how "What is my monthly rent?" finds "$ 2605.00 per month for rent" although the words differ. `rigveda ask` passes the top 12 chunks to the answer model.
+
+Filled-in PDF forms, such as e-signed leases, are read by word position, so typed-in values stay on the line with their labels.
 
 ## Supported files
 

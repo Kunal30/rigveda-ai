@@ -7,15 +7,16 @@ import sqlite3
 from pathlib import Path
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS documents (path TEXT PRIMARY KEY, modified_ns INTEGER NOT NULL, size INTEGER NOT NULL, indexed_at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'text');
+CREATE TABLE IF NOT EXISTS documents (path TEXT PRIMARY KEY, modified_ns INTEGER NOT NULL, size INTEGER NOT NULL, indexed_at INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'text', version TEXT NOT NULL DEFAULT '1');
 CREATE TABLE IF NOT EXISTS chunks (id INTEGER PRIMARY KEY, path TEXT NOT NULL REFERENCES documents(path) ON DELETE CASCADE, ordinal INTEGER NOT NULL, location TEXT NOT NULL DEFAULT '', text TEXT NOT NULL);
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text);
 CREATE INDEX IF NOT EXISTS chunks_path_index ON chunks(path);
+CREATE TABLE IF NOT EXISTS embeddings (chunk_id INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE, model TEXT NOT NULL, vector BLOB NOT NULL);
 """
 
 # Columns added after v0.1; older databases are upgraded in place.
 MIGRATIONS = {
-    "documents": {"kind": "TEXT NOT NULL DEFAULT 'text'"},
+    "documents": {"kind": "TEXT NOT NULL DEFAULT 'text'", "version": "TEXT NOT NULL DEFAULT '1'"},
     "chunks": {"location": "TEXT NOT NULL DEFAULT ''"},
 }
 

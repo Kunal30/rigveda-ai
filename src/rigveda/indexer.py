@@ -12,6 +12,7 @@ from typing import Callable, Iterator
 from . import extract
 from .chunking import chunks
 from .config import Config
+from .embeddings import embed_missing
 from .store import connect, documents_under, remove_document
 
 SKIP = {".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__"}
@@ -59,8 +60,8 @@ def index_file(con: sqlite3.Connection, path: Path, config: Config, log: Log = _
     """Index one file. Returns "updated", "unchanged" or "skipped"."""
     try:
         stat = path.stat()
-        known = con.execute("SELECT modified_ns, size FROM documents WHERE path=?", (str(path),)).fetchone()
-        if known and tuple(known) == (stat.st_mtime_ns, stat.st_size):
+        known = con.execute("SELECT modified_ns, size, version FROM documents WHERE path=?", (str(path),)).fetchone()
+        if known and tuple(known) == (stat.st_mtime_ns, stat.st_size, extract.version(path)):
             return "unchanged"
         kind = extract.kind(path)
         if kind in SLOW_KINDS:
@@ -74,8 +75,8 @@ def index_file(con: sqlite3.Connection, path: Path, config: Config, log: Log = _
         return "skipped"
     with con:
         remove_document(con, str(path))
-        con.execute("INSERT INTO documents(path, modified_ns, size, indexed_at, kind) VALUES (?, ?, ?, ?, ?)",
-                    (str(path), stat.st_mtime_ns, stat.st_size, int(time.time()), kind))
+        con.execute("INSERT INTO documents(path, modified_ns, size, indexed_at, kind, version) VALUES (?, ?, ?, ?, ?, ?)",
+                    (str(path), stat.st_mtime_ns, stat.st_size, int(time.time()), kind, extract.version(path)))
         ordinal = 0
         for segment in segments:
             for chunk in chunks(segment.text):
@@ -109,12 +110,17 @@ def index_paths(db: Path, roots: list[str], config: Config, log: Log = _stderr) 
                 seen.add(str(path))
                 status = index_file(con, path, config, log)
                 setattr(stats, status, getattr(stats, status) + 1)
+                if status == "updated":  # searchable by meaning right away, not after the whole walk
+                    embed_missing(con, config, log)
             # Forget files that were deleted, moved, or are now ignored since the last index.
             with con:
                 for item in documents_under(con, root):
                     if item not in seen:
                         remove_document(con, item)
                         stats.removed += 1
+        embedded = embed_missing(con, config, log)  # backfill chunks indexed before meaning search existed
+        if embedded:
+            log(f"Prepared {embedded} chunk(s) for meaning search.")
     finally:
         con.close()
     return stats
