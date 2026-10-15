@@ -8,6 +8,7 @@ from pathlib import Path
 
 from . import extract
 from .config import Config
+from .embeddings import embed_missing
 from .indexer import Log, _stderr, ignored, index_file, index_paths, remove_path
 from .store import connect
 
@@ -36,6 +37,7 @@ def process(db: Path, paths: set[Path], roots: list[Path], config: Config, log: 
                     log(f"Indexed {path}")
             elif not path.exists() and remove_path(con, path):
                 log(f"Removed {path}")
+        embed_missing(con, config, log)
     finally:
         con.close()
 

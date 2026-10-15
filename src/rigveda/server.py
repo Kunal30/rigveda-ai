@@ -9,6 +9,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from .config import Config
+
 from .llm import OllamaError, ask
 from .search import cite, search
 from .store import connect
@@ -39,6 +41,7 @@ class ServerConfig:
     model: str
     ollama: str
     limit: int
+    settings: Config | None = None  # enables meaning search
 
 
 def make_handler(config: ServerConfig):
@@ -96,7 +99,7 @@ def make_handler(config: ServerConfig):
             except (ValueError, json.JSONDecodeError):
                 self.respond(HTTPStatus.BAD_REQUEST, {"error": "Send a valid question under 6,000 characters."})
                 return
-            sources = search(config.database, question, config.limit)
+            sources = search(config.database, question, config.limit, config.settings)
             if not sources:
                 self.respond(HTTPStatus.OK, {"answer": "I could not find matching indexed text. Index a folder first, or try different terms.", "sources": []})
                 return

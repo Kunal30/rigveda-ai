@@ -100,7 +100,7 @@ A file watcher (`watchdog`) re-indexes changed files in the background.
 |---|---|---|
 | 0. Foundation ✅ | split `cli.py` into modules (`extract/`, `store`, `search`, `llm`); pytest; fix `.gitignore`; config file for the watched folder | tests pass, `rigveda index` behaves as before |
 | 1. Multimedia ingestion ✅ | PDF, PPTX, XLSX, images, audio and video extractors; file watcher | a video and a slide deck are searchable, with timestamp and slide citations |
-| 2. Semantic search | embeddings + hybrid ranking; better chat answers | finds the right file for a paraphrased question |
+| 2. Semantic search ✅ | embeddings + hybrid ranking; better chat answers | finds the right file for a paraphrased question |
 | 3. Facts profile | extraction + review page | name, DOB, address, IDs appear for approval with their source |
 | 4. Form autofill | `/suggest` with token auth + Chrome extension | a test form gets correct suggestions accepted with Tab |
 | 5. Writing help | grounded completions in text areas; optional desktop hotkey popup | |

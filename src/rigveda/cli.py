@@ -72,13 +72,14 @@ def main() -> None:
     commands.add_parser("status", help="Show what is indexed.")
     cmd_search = commands.add_parser("search", help="Search indexed files.")
     cmd_search.add_argument("question"); cmd_search.add_argument("--limit", type=int, default=5)
+    cmd_search.add_argument("--keywords-only", action="store_true", help="Skip meaning search")
     cmd_ask = commands.add_parser("ask", help="Ask a local Ollama model about indexed files.")
-    cmd_ask.add_argument("question"); cmd_ask.add_argument("--limit", type=int, default=5)
+    cmd_ask.add_argument("question"); cmd_ask.add_argument("--limit", type=int, default=12)
     cmd_ask.add_argument("--model"); cmd_ask.add_argument("--ollama")
     cmd_serve = commands.add_parser("serve", help="Run the local browser chat interface.")
     cmd_serve.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
     cmd_serve.add_argument("--port", type=int, default=8000)
-    cmd_serve.add_argument("--limit", type=int, default=5)
+    cmd_serve.add_argument("--limit", type=int, default=12)
     cmd_serve.add_argument("--model"); cmd_serve.add_argument("--ollama")
     args = parser.parse_args()
 
@@ -115,10 +116,10 @@ def main() -> None:
         if args.host not in {"127.0.0.1", "localhost", "::1"}:
             print("Warning: this server has no authentication. Do not expose it to an untrusted network.", file=sys.stderr)
         from .server import ServerConfig, run_server
-        run_server(ServerConfig(db, config.model, config.ollama, args.limit), args.host, args.port)
+        run_server(ServerConfig(db, config.model, config.ollama, args.limit, config), args.host, args.port)
         return
 
-    sources = search(db, args.question, args.limit)
+    sources = search(db, args.question, args.limit, None if getattr(args, "keywords_only", False) else config)
     if not sources:
         print("No matching indexed text. Run `rigveda index` first."); return
     if args.command == "search":

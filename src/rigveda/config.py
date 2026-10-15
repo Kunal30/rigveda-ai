@@ -28,6 +28,7 @@ class Config:
     ollama: str = "http://localhost:11434"
     model: str = "qwen3:4b"
     vision_model: str = "qwen2.5vl:7b"
+    embedding_model: str = "bge-m3"
     whisper_model: str = "large-v3"
 
     @property

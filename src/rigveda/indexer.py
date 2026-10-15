@@ -12,6 +12,7 @@ from typing import Callable, Iterator
 from . import extract
 from .chunking import chunks
 from .config import Config
+from .embeddings import embed_missing
 from .store import connect, documents_under, remove_document
 
 SKIP = {".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__"}
@@ -109,12 +110,17 @@ def index_paths(db: Path, roots: list[str], config: Config, log: Log = _stderr) 
                 seen.add(str(path))
                 status = index_file(con, path, config, log)
                 setattr(stats, status, getattr(stats, status) + 1)
+                if status == "updated":  # searchable by meaning right away, not after the whole walk
+                    embed_missing(con, config, log)
             # Forget files that were deleted, moved, or are now ignored since the last index.
             with con:
                 for item in documents_under(con, root):
                     if item not in seen:
                         remove_document(con, item)
                         stats.removed += 1
+        embedded = embed_missing(con, config, log)  # backfill chunks indexed before meaning search existed
+        if embedded:
+            log(f"Prepared {embedded} chunk(s) for meaning search.")
     finally:
         con.close()
     return stats
