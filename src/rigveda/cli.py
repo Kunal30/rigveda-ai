@@ -1,165 +1,114 @@
-"""Private local filesystem indexing and Ollama-backed answers."""
+"""Command-line interface for Rigveda AI."""
 
 from __future__ import annotations
 
 import argparse
-import json
-import re
-import sqlite3
 import sys
-import time
 from pathlib import Path
-from urllib.error import URLError
-from urllib.request import Request, urlopen
 
-TEXT = {".c", ".cc", ".cpp", ".css", ".csv", ".go", ".h", ".html", ".java", ".js", ".json", ".md", ".py", ".rb", ".rs", ".rst", ".sh", ".sql", ".toml", ".ts", ".txt", ".xml", ".yaml", ".yml"}
-OPTIONAL = {".pdf", ".docx"}
-SKIP = {".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__"}
-
-
-def db_path(value: str | None) -> Path:
-    return Path(value or ".rigveda/rigveda.db").expanduser().resolve()
+from . import config as configuration
+from .indexer import index_paths
+from .llm import OllamaError, ask
+from .search import cite, search
+from .store import connect
 
 
-def connect(path: Path) -> sqlite3.Connection:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(path)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA foreign_keys = ON")
-    con.executescript("""
-        CREATE TABLE IF NOT EXISTS documents (path TEXT PRIMARY KEY, modified_ns INTEGER NOT NULL, size INTEGER NOT NULL, indexed_at INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS chunks (id INTEGER PRIMARY KEY, path TEXT NOT NULL REFERENCES documents(path) ON DELETE CASCADE, ordinal INTEGER NOT NULL, text TEXT NOT NULL);
-        CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text);
-        CREATE INDEX IF NOT EXISTS chunks_path_index ON chunks(path);
-    """)
-    return con
-
-
-def files(root: Path):
-    if root.is_file():
-        if root.suffix.lower() in TEXT | OPTIONAL:
-            yield root
+def folders_command(args, config: configuration.Config) -> None:
+    if args.action == "list":
+        print("\n".join(config.folders) if config.folders else "No folders yet. Add one with `rigveda folders add PATH`.")
         return
-    for path in root.rglob("*"):
-        if any(part.startswith(".") or part in SKIP for part in path.parts):
-            continue
-        if path.is_file() and not path.is_symlink() and path.suffix.lower() in TEXT | OPTIONAL:
-            yield path
+    for raw in args.paths:
+        folder = str(Path(raw).expanduser().resolve())
+        if args.action == "add":
+            if not Path(folder).is_dir():
+                raise SystemExit(f"Not a folder: {folder}")
+            if folder not in config.folders:
+                config.folders.append(folder)
+        elif folder in config.folders:
+            config.folders.remove(folder)
+    path = configuration.save(config)
+    print(f"Saved {path}. Watched folders:\n" + ("\n".join(config.folders) or "(none)"))
+    if args.action == "remove":
+        print("Run `rigveda index` to drop their files from the index.")
 
 
-def extract(path: Path) -> str | None:
-    suffix = path.suffix.lower()
-    if suffix == ".pdf":
-        try:
-            from pypdf import PdfReader
-        except ImportError:
-            print(f"Skipping {path}: install pypdf to index PDFs.", file=sys.stderr)
-            return None
-        return "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
-    if suffix == ".docx":
-        try:
-            from docx import Document
-        except ImportError:
-            print(f"Skipping {path}: install python-docx to index DOCX files.", file=sys.stderr)
-            return None
-        return "\n".join(p.text for p in Document(path).paragraphs)
-    return path.read_text(encoding="utf-8", errors="replace")
-
-
-def chunks(text: str, size: int = 1200, overlap: int = 200) -> list[str]:
-    text = re.sub(r"\n{3,}", "\n\n", text).strip()
-    result, start = [], 0
-    while start < len(text):
-        end = min(start + size, len(text))
-        if end < len(text):
-            breakpoint = max(text.rfind("\n", start, end), text.rfind(" ", start, end))
-            end = breakpoint if breakpoint > start + size // 2 else end
-        result.append(text[start:end].strip())
-        start = end if end == len(text) else max(end - overlap, start + 1)
-    return [item for item in result if item]
-
-
-def index(db: Path, roots: list[str]) -> tuple[int, int]:
-    con, changed, skipped = connect(db), 0, 0
-    for raw_root in roots:
-        root = Path(raw_root).expanduser().resolve()
-        if not root.exists():
-            print(f"Not found: {root}", file=sys.stderr); skipped += 1; continue
-        for path in files(root):
-            try:
-                stat = path.stat()
-                known = con.execute("SELECT modified_ns, size FROM documents WHERE path=?", (str(path),)).fetchone()
-                if known and tuple(known) == (stat.st_mtime_ns, stat.st_size):
-                    skipped += 1; continue
-                text = extract(path)
-                if text is None:
-                    skipped += 1; continue
-                with con:
-                    for row in con.execute("SELECT id FROM chunks WHERE path=?", (str(path),)):
-                        con.execute("DELETE FROM chunks_fts WHERE rowid=?", (row[0],))
-                    con.execute("DELETE FROM documents WHERE path=?", (str(path),))
-                    con.execute("INSERT INTO documents VALUES (?, ?, ?, ?)", (str(path), stat.st_mtime_ns, stat.st_size, int(time.time())))
-                    for ordinal, chunk in enumerate(chunks(text)):
-                        cursor = con.execute("INSERT INTO chunks(path, ordinal, text) VALUES (?, ?, ?)", (str(path), ordinal, chunk))
-                        con.execute("INSERT INTO chunks_fts(rowid, text) VALUES (?, ?)", (cursor.lastrowid, chunk))
-                changed += 1
-            except (OSError, ValueError) as error:
-                print(f"Skipping {path}: {error}", file=sys.stderr); skipped += 1
-    con.close()
-    return changed, skipped
-
-
-def search(db: Path, question: str, limit: int) -> list[sqlite3.Row]:
-    terms = re.findall(r"[\w'-]+", question)
-    if not terms:
-        return []
-    query = " OR ".join(f'"{term}"' for term in terms)
+def status_command(db: Path, config: configuration.Config) -> None:
     con = connect(db)
-    rows = con.execute("""SELECT chunks.path, chunks.ordinal, chunks.text, bm25(chunks_fts) score
-        FROM chunks_fts JOIN chunks ON chunks.id=chunks_fts.rowid
-        WHERE chunks_fts MATCH ? ORDER BY score LIMIT ?""", (query, limit)).fetchall()
+    rows = con.execute("SELECT kind, COUNT(*) files FROM documents GROUP BY kind ORDER BY files DESC").fetchall()
+    chunks = con.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
     con.close()
-    return rows
-
-
-def ask(question: str, sources: list[sqlite3.Row], model: str, host: str) -> str:
-    context = "\n\n".join(f"SOURCE: {r['path']} (chunk {r['ordinal'] + 1})\n{r['text']}" for r in sources)
-    prompt = "Answer only from this local-file context; say when it is insufficient and cite paths.\n\n" + context + "\n\nQUESTION: " + question
-    data = json.dumps({"model": model, "stream": False, "messages": [{"role": "user", "content": prompt}]}).encode()
-    request = Request(host.rstrip("/") + "/api/chat", data=data, headers={"Content-Type": "application/json"})
-    try:
-        with urlopen(request, timeout=120) as response:
-            return json.load(response)["message"]["content"]
-    except (URLError, TimeoutError, KeyError, json.JSONDecodeError) as error:
-        raise RuntimeError(f"Could not reach Ollama at {host}: {error}") from error
+    print(f"Database: {db}\nFolders: {', '.join(config.folders) or '(none)'}")
+    kinds = ", ".join(f"{row['files']} {row['kind']}" for row in rows) or "none"
+    print(f"Files: {sum(row['files'] for row in rows)} ({kinds}); chunks: {chunks}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Private, local-first filesystem assistant.")
-    parser.add_argument("--db", help="Index location (default: .rigveda/rigveda.db)")
+    parser.add_argument("--db", help="Index location (default: from config, ~/.local/share/rigveda/rigveda.db)")
     commands = parser.add_subparsers(dest="command", required=True)
-    cmd_index = commands.add_parser("index", help="Index selected files or directories.")
-    cmd_index.add_argument("paths", nargs="+")
+
+    cmd_folders = commands.add_parser("folders", help="Choose which folders Rigveda knows about.")
+    cmd_folders.add_argument("action", choices=["add", "remove", "list"])
+    cmd_folders.add_argument("paths", nargs="*")
+    cmd_index = commands.add_parser("index", help="Index the watched folders, or the paths given.")
+    cmd_index.add_argument("paths", nargs="*")
+    cmd_watch = commands.add_parser("watch", help="Index the watched folders (or the paths given), then keep the index updated as files change.")
+    cmd_watch.add_argument("paths", nargs="*")
+    commands.add_parser("status", help="Show what is indexed.")
     cmd_search = commands.add_parser("search", help="Search indexed files.")
     cmd_search.add_argument("question"); cmd_search.add_argument("--limit", type=int, default=5)
     cmd_ask = commands.add_parser("ask", help="Ask a local Ollama model about indexed files.")
     cmd_ask.add_argument("question"); cmd_ask.add_argument("--limit", type=int, default=5)
-    cmd_ask.add_argument("--model", default="qwen3:4b"); cmd_ask.add_argument("--ollama", default="http://localhost:11434")
-    args, db = parser.parse_args(), db_path(parser.parse_args().db)
-    if args.command == "index":
-        updated, skipped = index(db, args.paths)
-        print(f"Index complete: {updated} updated, {skipped} unchanged or skipped. Database: {db}")
+    cmd_ask.add_argument("--model"); cmd_ask.add_argument("--ollama")
+    cmd_serve = commands.add_parser("serve", help="Run the local browser chat interface.")
+    cmd_serve.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
+    cmd_serve.add_argument("--port", type=int, default=8000)
+    cmd_serve.add_argument("--limit", type=int, default=5)
+    cmd_serve.add_argument("--model"); cmd_serve.add_argument("--ollama")
+    args = parser.parse_args()
+
+    config = configuration.load()
+    if getattr(args, "model", None):
+        config.model = args.model
+    if getattr(args, "ollama", None):
+        config.ollama = args.ollama
+    db = Path(args.db).expanduser().resolve() if args.db else config.database_path
+
+    if args.command == "folders":
+        if args.action != "list" and not args.paths:
+            parser.error(f"folders {args.action} needs at least one PATH")
+        folders_command(args, config)
         return
+    if args.command == "status":
+        status_command(db, config)
+        return
+    if args.command in {"index", "watch"}:
+        paths = getattr(args, "paths", None) or config.folders
+        if not paths:
+            raise SystemExit("No folders to index. Add one with `rigveda folders add PATH`, or pass paths.")
+        if args.command == "watch":
+            from .watch import watch
+            watch(db, paths, config)
+            return
+        print(f"Index complete: {index_paths(db, paths, config)}. Database: {db}")
+        return
+    if args.command == "serve":
+        if args.host not in {"127.0.0.1", "localhost", "::1"}:
+            print("Warning: this server has no authentication. Do not expose it to an untrusted network.", file=sys.stderr)
+        from .server import ServerConfig, run_server
+        run_server(ServerConfig(db, config.model, config.ollama, args.limit), args.host, args.port)
+        return
+
     sources = search(db, args.question, args.limit)
     if not sources:
-        print("No matching indexed text. Run `rigveda index PATH` first."); return
+        print("No matching indexed text. Run `rigveda index` first."); return
     if args.command == "search":
         for row in sources:
-            print(f"{row['path']} (chunk {row['ordinal'] + 1})\n  {row['text'].replace(chr(10), ' ')[:320]}\n")
+            print(f"{cite(row)}\n  {row['text'].replace(chr(10), ' ')[:320]}\n")
         return
     try:
-        print(ask(args.question, sources, args.model, args.ollama))
-    except RuntimeError as error:
+        print(ask(args.question, sources, config.model, config.ollama))
+    except OllamaError as error:
         print(error, file=sys.stderr)
         print("Search still works: `rigveda search \"your question\"`", file=sys.stderr)
         raise SystemExit(2)
