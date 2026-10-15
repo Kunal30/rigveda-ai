@@ -1,13 +1,52 @@
 {
   "manifest_version": 3,
   "name": "Rigveda AI",
-  "version": "0.1.0",
-  "description": "Suggests your approved personal details in web forms, from Rigveda AI running on your own computer.",
-  "icons": {"16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png"},
-  "action": {"default_popup": "popup.html", "default_icon": {"16": "icons/icon-16.png", "32": "icons/icon-32.png"}},
+  "version": "0.2.0",
+  "description": "Suggests your approved personal details in web forms and drafts text from your files, using Rigveda AI on your own computer.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  },
   "options_page": "options.html",
-  "background": {"service_worker": "background.js"},
-  "permissions": ["storage", "activeTab"],
-  "host_permissions": ["http://127.0.0.1/*"],
-  "content_scripts": [{"matches": ["http://*/*", "https://*/*"], "js": ["content.js"], "run_at": "document_idle"}]
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "storage",
+    "activeTab",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "commands": {
+    "write": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
+      "description": "Write with Rigveda in the current text box"
+    }
+  }
 }

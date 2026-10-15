@@ -60,20 +60,43 @@ FACTS_FORMAT = {
 }
 
 
-def extract_facts(host: str, model: str, prompt: str) -> list[dict]:
-    """Facts as {key, value, evidence} dicts. The reply is constrained to JSON; no thinking, for speed."""
+def quick(host: str, model: str, prompt: str, timeout: float = 300, **options) -> str:
+    """A reply without the model's thinking step, for speed; models that cannot think are asked plainly."""
     messages = [{"role": "user", "content": prompt}]
     try:
-        reply = chat(host, model, messages, timeout=300, format=FACTS_FORMAT, think=False, options={"temperature": 0})
+        return chat(host, model, messages, timeout=timeout, think=False, **options)
     except OllamaError as error:
         if "think" not in str(error).lower():
             raise
-        reply = chat(host, model, messages, timeout=300, format=FACTS_FORMAT, options={"temperature": 0})  # model can't think
+        return chat(host, model, messages, timeout=timeout, **options)
+
+
+def extract_facts(host: str, model: str, prompt: str) -> list[dict]:
+    """Facts as {key, value, evidence} dicts. The reply is constrained to JSON."""
+    reply = quick(host, model, prompt, format=FACTS_FORMAT, options={"temperature": 0})
     try:
         facts = json.loads(reply).get("facts", [])
     except (json.JSONDecodeError, AttributeError):
         return []
     return [fact for fact in facts if isinstance(fact, dict)]
+
+
+WRITE_FORMAT = {
+    "type": "object",
+    "properties": {"text": {"type": "string"}, "used": {"type": "array", "items": {"type": "integer"}}},
+    "required": ["text", "used"],
+}
+
+
+def write_text(host: str, model: str, prompt: str) -> dict:
+    """{"text": words for a text box, "used": numbers of the passages drawn on}. A little varied, and short
+    enough to arrive in seconds."""
+    reply = quick(host, model, prompt, timeout=120, format=WRITE_FORMAT, options={"temperature": 0.5, "num_predict": 800})
+    try:
+        data = json.loads(reply)
+        return {"text": str(data.get("text", "")), "used": list(data.get("used") or [])}
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return {"text": reply, "used": []}
 
 
 def ask(question: str, sources: Iterable, model: str, host: str) -> str:
