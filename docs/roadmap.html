@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rigveda AI Roadmap</title>
+<style>
+  :root {
+    --bg: #faf8f4; --surface: #ffffff; --ink: #1f1d1a; --muted: #6b665e;
+    --line: #e4dfd6; --accent: #b4540f; --accent-soft: #fbeee3;
+    --ok: #2f6f4f; --ok-soft: #e5f2ea; --warn: #8a3b12; --warn-soft: #fdece4;
+    --code: #f3efe8;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161513; --surface: #1f1d1a; --ink: #ece8e1; --muted: #a39d93;
+      --line: #34312c; --accent: #f0904a; --accent-soft: #3a2616;
+      --ok: #7cc79d; --ok-soft: #1c2e24; --warn: #f2a07a; --warn-soft: #3a2118;
+      --code: #2a2723;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.65 "Inter", system-ui, -apple-system, "Segoe UI", Ubuntu, sans-serif;
+    padding: 0 20px;
+  }
+  main { max-width: 860px; margin: 0 auto; padding-block: 56px 96px; }
+  header .eyebrow { color: var(--accent); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; font-size: 13px; }
+  h1 { font-size: clamp(32px, 5vw, 44px); line-height: 1.15; margin: 8px 0 12px; letter-spacing: -.02em; }
+  .lede { font-size: 19px; color: var(--muted); margin: 0 0 32px; }
+  h2 { font-size: 24px; margin: 56px 0 12px; letter-spacing: -.01em; }
+  h3 { font-size: 18px; margin: 28px 0 8px; }
+  p { margin: 0 0 14px; }
+  code { font-family: "JetBrains Mono", ui-monospace, "Ubuntu Mono", monospace; font-size: .9em; background: var(--code); padding: 1px 6px; border-radius: 5px; }
+  pre { background: var(--code); border-radius: 10px; padding: 16px 18px; overflow-x: auto; font-size: 14px; line-height: 1.55; }
+  pre code { background: none; padding: 0; }
+  .decisions { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+  .card .tag { display: inline-block; font-size: 12px; font-weight: 600; color: var(--ok); background: var(--ok-soft); padding: 2px 10px; border-radius: 99px; margin-bottom: 8px; }
+  .card h3 { margin: 0 0 6px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 18px 0; }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .flow { overflow-x: auto; margin: 16px 0 8px; }
+  .flow svg { display: block; min-width: 720px; width: 100%; height: auto; }
+  .flow text { fill: var(--ink); font: 13px system-ui, sans-serif; }
+  .flow .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+  .flow .hl { fill: var(--accent-soft); stroke: var(--accent); }
+  .flow .arrow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#a); }
+  .flow .small { fill: var(--muted); font-size: 11.5px; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  ul { padding-left: 22px; margin: 0 0 14px; }
+  li { margin-bottom: 6px; }
+  .phases { list-style: none; padding: 0; counter-reset: p; }
+  .phases li { position: relative; padding: 16px 20px 16px 64px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; }
+  .phases li::before { counter-increment: p; content: counter(p) ; position: absolute; left: 18px; top: 16px; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; display: grid; place-items: center; font-size: 14px; }
+  .phases li:first-child::before { content: "0"; }
+  .phases li:first-child { counter-reset: p -1; }
+  .phases strong { display: block; font-size: 16px; }
+  .phases .done { color: var(--muted); font-size: 14px; margin-top: 4px; }
+  footer { margin-top: 64px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); padding-top: 18px; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <div class="eyebrow">Rigveda AI · Roadmap</div>
+  <h1>A personal AI built on your own files</h1>
+  <p class="lede">You pick a folder. Rigveda reads the documents, slides, images, audio and video in it, answers questions about them, and suggests answers while you fill in forms in the browser.</p>
+</header>
+
+<section>
+  <h2>Decisions so far</h2>
+  <div class="decisions">
+    <div class="card">
+      <span class="tag">Decided</span>
+      <h3>Fully local</h3>
+      <p>Parsing, transcription, search and the AI model all run on this machine (RTX 5090, 32 GB VRAM) through Ollama and Whisper. No document text leaves the computer.</p>
+    </div>
+    <div class="card">
+      <span class="tag">Decided</span>
+      <h3>Browser forms first</h3>
+      <p>Suggestions appear through a Chrome extension. A desktop-wide hotkey popup may come later; Ubuntu's Wayland session doesn't let one app read another app's text fields.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>How it fits together</h2>
+  <div class="flow">
+    <svg viewBox="0 0 760 300" role="img" aria-label="Diagram: files are ingested into SQLite; the Chrome extension and chat UI query it">
+      <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor" style="fill: var(--muted)"/></marker></defs>
+      <rect class="box" x="10" y="20" width="150" height="56" rx="10"/>
+      <text x="85" y="44" text-anchor="middle" font-weight="600">Watched folder</text>
+      <text x="85" y="62" text-anchor="middle" class="small">PDF, PPTX, video…</text>
+      <rect class="box" x="210" y="20" width="150" height="56" rx="10"/>
+      <text x="285" y="44" text-anchor="middle" font-weight="600">Extract text</text>
+      <text x="285" y="62" text-anchor="middle" class="small">OCR, transcripts</text>
+      <rect class="box" x="410" y="20" width="130" height="56" rx="10"/>
+      <text x="475" y="44" text-anchor="middle" font-weight="600">Chunk + embed</text>
+      <text x="475" y="62" text-anchor="middle" class="small">bge-m3</text>
+      <rect class="box" x="210" y="110" width="150" height="56" rx="10"/>
+      <text x="285" y="134" text-anchor="middle" font-weight="600">Extract facts</text>
+      <text x="285" y="152" text-anchor="middle" class="small">name, DOB, IDs…</text>
+      <rect class="box hl" x="590" y="60" width="160" height="80" rx="10"/>
+      <text x="670" y="90" text-anchor="middle" font-weight="600">SQLite</text>
+      <text x="670" y="108" text-anchor="middle" class="small">text, vectors,</text>
+      <text x="670" y="124" text-anchor="middle" class="small">approved facts</text>
+      <path class="arrow" d="M160 48 H205"/>
+      <path class="arrow" d="M360 48 H405"/>
+      <path class="arrow" d="M540 48 C565 48 565 75 586 80"/>
+      <path class="arrow" d="M285 76 V105"/>
+      <path class="arrow" d="M360 138 C470 138 520 130 586 120"/>
+      <rect class="box" x="10" y="210" width="170" height="56" rx="10"/>
+      <text x="95" y="234" text-anchor="middle" font-weight="600">Chrome extension</text>
+      <text x="95" y="252" text-anchor="middle" class="small">form fields</text>
+      <rect class="box" x="10" y="270" width="170" height="0" rx="0" style="display:none"/>
+      <rect class="box" x="230" y="210" width="150" height="56" rx="10"/>
+      <text x="305" y="234" text-anchor="middle" font-weight="600">/suggest</text>
+      <text x="305" y="252" text-anchor="middle" class="small">facts lookup, fast</text>
+      <rect class="box" x="420" y="210" width="150" height="56" rx="10"/>
+      <text x="495" y="234" text-anchor="middle" font-weight="600">/ask</text>
+      <text x="495" y="252" text-anchor="middle" class="small">search + local LLM</text>
+      <path class="arrow" d="M180 238 H225"/>
+      <path class="arrow" d="M380 230 C470 200 560 170 610 144"/>
+      <path class="arrow" d="M570 238 C620 230 660 190 668 145"/>
+      <text x="495" y="290" text-anchor="middle" class="small">Browser chat UI uses /ask</text>
+    </svg>
+  </div>
+
+  <div class="callout">
+    <p><strong>Is this RAG?</strong> Partly. Answering questions about your files is retrieval-augmented generation (RAG): find the relevant pieces, then let the AI answer from them.</p>
+    <p style="margin:0">RAG alone is a poor fit for forms. A form field needs an answer in a fraction of a second, and an exact one, since a passport number can't be paraphrased. So Rigveda also builds a <strong>personal facts profile</strong>: facts are pulled out of documents once, at indexing time, you approve them, and form suggestions become a quick lookup.</p>
+  </div>
+</section>
+
+<section>
+  <h2>1. Every file type becomes text</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Type</th><th>How</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Text, Markdown, code, CSV, JSON</td><td>read directly</td><td>already works</td></tr>
+        <tr><td>PDF</td><td>PyMuPDF</td><td>text per page; OCR for scanned pages</td></tr>
+        <tr><td>Scanned PDFs, images</td><td><code>qwen2.5vl</code> via Ollama</td><td>reads text, describes photos and diagrams</td></tr>
+        <tr><td>Word (DOCX)</td><td>python-docx</td><td>paragraphs and tables</td></tr>
+        <tr><td>PowerPoint (PPTX)</td><td>python-pptx</td><td>slide text <strong>and speaker notes</strong></td></tr>
+        <tr><td>Excel (XLSX)</td><td>openpyxl</td><td>sheet by sheet, as rows</td></tr>
+        <tr><td>Audio, video</td><td>ffmpeg → faster-whisper <code>large-v3</code> on GPU</td><td>timestamped transcript, cited as <code>video.mp4 @ 12:34</code></td></tr>
+        <tr><td>Video frames (later)</td><td>keyframes → vision model</td><td>slides or screens shown in recordings</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:14px">Each piece keeps its location (page, slide or timestamp) so answers can point to the exact spot. A file watcher re-indexes changed files in the background.</p>
+
+  <h2>2. Search by words and by meaning</h2>
+  <ul>
+    <li><strong>Keyword search</strong> (SQLite FTS5) for exact terms like names and ID numbers.</li>
+    <li><strong>Meaning search</strong>: embeddings from <code>bge-m3</code>, which handles many languages, stored with <code>sqlite-vec</code>.</li>
+    <li>The two result lists are merged, so a loosely worded question still finds the right file.</li>
+    <li>Everything stays in one SQLite file, with no separate database server.</li>
+  </ul>
+
+  <h2>3. Answers</h2>
+  <ul>
+    <li><code>qwen3:14b</code>, or <code>qwen3:32b</code> (which fits in 32 GB), for chat answers with citations.</li>
+    <li><code>qwen3:4b</code> for fast jobs like matching a form field to a fact.</li>
+  </ul>
+
+  <h2>4. Personal facts profile</h2>
+  <ul>
+    <li>While indexing, the AI scans likely documents (IDs, resumes, bills, letters) and pulls out facts like <code>full_name</code>, <code>date_of_birth</code>, <code>address.current</code>, <code>passport.number</code> and <code>employer</code>, each with its source file and page.</li>
+    <li>Facts stay <strong>pending</strong> until you approve or edit them on a review page. Only approved facts are suggested.</li>
+    <li>Conflicting facts, such as two addresses, keep their dates, so the newest is preferred and older ones are still visible.</li>
+  </ul>
+
+  <h2>5. Chrome extension for forms</h2>
+  <ul>
+    <li>When you click into a field, the extension reads its label, placeholder and nearby text to work out what it's asking for.</li>
+    <li>Your local server returns up to 3 suggestions, each showing which file it came from.</li>
+    <li><strong>Tab</strong> accepts a suggestion and <strong>Esc</strong> dismisses it. A "Fill this form" button fills every field it can for you to review. It <strong>never submits</strong> a form.</li>
+    <li>Later: suggestions while writing longer text, such as cover letters or "describe your experience" boxes.</li>
+  </ul>
+
+  <div class="callout warn">
+    <p><strong>Security.</strong> A server running on your computer can be reached by any web page you visit.</p>
+    <ul style="margin-bottom:0">
+      <li>Every request needs a secret token, which you paste into the extension once. Without it, any website could query the server and read your documents.</li>
+      <li>The server only accepts requests from the extension and only listens on <code>127.0.0.1</code>.</li>
+      <li>Password, card number and CVV fields are never touched. There's an off switch for each site.</li>
+      <li>The index holds sensitive text, so it lives in <code>~/.local/share/rigveda</code>, readable only by you.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <h2>Phases</h2>
+  <ol class="phases">
+    <li><strong>Foundation</strong>Split the code into modules, add tests, fix <code>.gitignore</code>, and add a config file for the watched folder.<div class="done">Done when tests pass and indexing behaves as before.</div></li>
+    <li><strong>Read every file type</strong>PDF, PowerPoint, Excel, image, audio and video support, plus the file watcher.<div class="done">Done when a video and a slide deck are searchable, with timestamp and slide citations.</div></li>
+    <li><strong>Search by meaning</strong>Embeddings, merged ranking and better chat answers.<div class="done">Done when a loosely worded question finds the right file.</div></li>
+    <li><strong>Facts profile</strong>Fact extraction and a review page.<div class="done">Done when your name, date of birth, address and IDs appear for approval with their source.</div></li>
+    <li><strong>Form autofill</strong>The <code>/suggest</code> endpoint with token security, plus the Chrome extension.<div class="done">Done when a test form gets correct suggestions you accept with Tab.</div></li>
+    <li><strong>Writing help</strong>Suggestions inside longer text boxes, and an optional desktop hotkey popup.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>Models to download</h2>
+<pre><code>ollama pull qwen3:14b      # answers
+ollama pull bge-m3         # meaning search
+ollama pull qwen2.5vl:7b   # reading scans and images
+# faster-whisper downloads large-v3 on first use (~3 GB)</code></pre>
+</section>
+
+<footer>Source: <code>docs/ROADMAP.md</code> in the rigveda-ai repo.</footer>
+</main>
+</body>
+</html>

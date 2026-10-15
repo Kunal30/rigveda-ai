@@ -4,14 +4,24 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rigveda-ai"
-version = "0.1.0"
+version = "0.2.0"
 description = "A private, local-first filesystem assistant"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 readme = "README.md"
 license = {text = "MIT"}
+
+[project.optional-dependencies]
+docs = ["pymupdf>=1.24", "python-docx>=1.1", "python-pptx>=1.0", "openpyxl>=3.1"]
+media = ["faster-whisper>=1.1", "nvidia-cublas-cu12", "nvidia-cudnn-cu12>=9,<10"]
+watch = ["watchdog>=4"]
+all = ["rigveda-ai[docs,media,watch]"]
+dev = ["pytest>=8"]
 
 [project.scripts]
 rigveda = "rigveda.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

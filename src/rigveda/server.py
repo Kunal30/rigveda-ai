@@ -9,7 +9,9 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from .cli import ask, search
+from .llm import OllamaError, ask
+from .search import cite, search
+from .store import connect
 
 
 INDEX_HTML = """<!doctype html>
@@ -20,12 +22,13 @@ INDEX_HTML = """<!doctype html>
 main{max-width:860px;margin:auto;min-height:100vh;padding:28px 18px;display:flex;flex-direction:column}header{padding:10px 6px 24px}h1{margin:0;font-size:1.7rem;letter-spacing:-.04em}header p{color:var(--muted);margin:.35rem 0 0}.status{font-size:.8rem;color:var(--muted)}
 #messages{flex:1;display:flex;flex-direction:column;gap:16px}.message{max-width:86%;padding:14px 16px;border:1px solid var(--line);border-radius:16px;background:var(--panel);white-space:pre-wrap;line-height:1.5}.message.user{align-self:flex-end;background:var(--user)}.sources{font-size:.78rem;color:var(--muted);margin-top:12px;word-break:break-all}.sources b{color:var(--text)}
 form{display:flex;gap:10px;margin-top:22px;padding:10px;border:1px solid var(--line);border-radius:18px;background:rgba(18,26,48,.9);position:sticky;bottom:12px}textarea{font:inherit;color:inherit;background:transparent;border:0;resize:none;outline:0;min-height:44px;max-height:150px;flex:1;padding:10px}button{align-self:end;background:var(--accent);color:#07102d;border:0;border-radius:12px;font-weight:700;padding:12px 16px;cursor:pointer}button:disabled{opacity:.5;cursor:wait}.empty{color:var(--muted);text-align:center;margin-top:14vh}
-</style></head><body><main><header><h1>Rigveda AI</h1><p>Private answers from your selected local files.</p><span class="status" id="status">Checking local index…</span></header><section id="messages"><p class="empty">Ask a question about the folders you indexed.</p></section><form id="chat"><textarea id="question" placeholder="Ask about your files…" aria-label="Question" autofocus></textarea><button id="send">Send</button></form></main>
+</style></head><body><main><header><h1>Rigveda AI</h1><p>Private answers from your selected local files.</p><span class="status" id="status">Checking local index…</span></header><section id="messages"><p class="empty">Ask a question about your files: documents, slides, images, audio and video.</p></section><form id="chat"><textarea id="question" placeholder="Ask about your files…" aria-label="Question" autofocus></textarea><button id="send">Send</button></form></main>
 <script>
 const messages=document.querySelector('#messages'), form=document.querySelector('#chat'), question=document.querySelector('#question'), send=document.querySelector('#send'), status=document.querySelector('#status');
-function message(text, user, sources=[]){const box=document.createElement('article');box.className='message '+(user?'user':'assistant');box.textContent=text;if(sources.length){const source=document.createElement('div');source.className='sources';source.innerHTML='<b>Sources</b><br>'+sources.map(s=>s.path+' (chunk '+s.chunk+')').join('<br>');box.append(source)}messages.querySelector('.empty')?.remove();messages.append(box);box.scrollIntoView({behavior:'smooth',block:'end'});return box}
+function sourceList(sources){const box=document.createElement('div');box.className='sources';const title=document.createElement('b');title.textContent='Sources';box.append(title);for(const s of sources){const line=document.createElement('div');line.textContent=s.cite||(s.path+' (chunk '+s.chunk+')');box.append(line)}return box}
+function message(text, user, sources=[]){const box=document.createElement('article');box.className='message '+(user?'user':'assistant');box.textContent=text;if(sources.length)box.append(sourceList(sources));messages.querySelector('.empty')?.remove();messages.append(box);box.scrollIntoView({behavior:'smooth',block:'end'});return box}
 async function health(){try{const r=await fetch('/api/health');const d=await r.json();status.textContent=d.documents+' indexed file'+(d.documents===1?'':'s')+' · '+d.model}catch{status.textContent='Local server is unavailable'}}
-form.addEventListener('submit',async e=>{e.preventDefault();const text=question.value.trim();if(!text||send.disabled)return;message(text,true);question.value='';send.disabled=true;send.textContent='Thinking…';const pending=message('Searching your local index…',false);try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:text})});const d=await r.json();pending.textContent=d.answer||d.error||'No answer returned.';if(d.sources?.length){const s=document.createElement('div');s.className='sources';s.innerHTML='<b>Sources</b><br>'+d.sources.map(x=>x.path+' (chunk '+x.chunk+')').join('<br>');pending.append(s)}}catch{pending.textContent='The local server could not complete that request.'}finally{send.disabled=false;send.textContent='Send';question.focus()}});
+form.addEventListener('submit',async e=>{e.preventDefault();const text=question.value.trim();if(!text||send.disabled)return;message(text,true);question.value='';send.disabled=true;send.textContent='Thinking…';const pending=message('Searching your local index…',false);try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:text})});const d=await r.json();pending.textContent=d.answer||d.error||'No answer returned.';if(d.sources?.length)pending.append(sourceList(d.sources))}catch{pending.textContent='The local server could not complete that request.'}finally{send.disabled=false;send.textContent='Send';question.focus()}});
 question.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();form.requestSubmit()}});health();
 </script></body></html>"""
 
@@ -66,7 +69,6 @@ def make_handler(config: ServerConfig):
                 return
             if self.path == "/api/health":
                 try:
-                    from .cli import connect
                     con = connect(config.database)
                     count = con.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
                     con.close()
@@ -100,10 +102,10 @@ def make_handler(config: ServerConfig):
                 return
             try:
                 answer = ask(question, sources, config.model, config.ollama)
-            except RuntimeError as error:
+            except OllamaError as error:
                 self.respond(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(error), "sources": []})
                 return
-            self.respond(HTTPStatus.OK, {"answer": answer, "sources": [{"path": row["path"], "chunk": row["ordinal"] + 1} for row in sources]})
+            self.respond(HTTPStatus.OK, {"answer": answer, "sources": [{"path": row["path"], "chunk": row["ordinal"] + 1, "cite": cite(row)} for row in sources]})
 
     return Handler
 
