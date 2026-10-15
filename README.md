@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo-wordmark.svg" alt="Rigveda AI" width="420"></p>
+
 # Rigveda AI
 
 Rigveda AI is a private assistant for the files on your Ubuntu machine. You choose the folders; it reads the documents, slides, spreadsheets, images, audio and video in them, indexes them into a local SQLite database, and answers questions with a locally running Ollama model. Every answer cites its source, down to the page, slide or timestamp.

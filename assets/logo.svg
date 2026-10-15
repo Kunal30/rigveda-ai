@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Rigveda AI">
+  <title>Rigveda AI</title>
+  <defs>
+    <clipPath id="tile"><rect width="512" height="512" rx="112"/></clipPath>
+    <radialGradient id="night" cx="50%" cy="35%" r="75%"><stop offset="0" stop-color="#2a2160"/><stop offset="1" stop-color="#0c0a22"/></radialGradient>
+    <radialGradient id="halo" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#ffd27a" stop-opacity=".95"/><stop offset=".7" stop-color="#f6a63a" stop-opacity=".55"/><stop offset="1" stop-color="#f6a63a" stop-opacity="0"/></radialGradient>
+    <linearGradient id="robe" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffa03a"/><stop offset="1" stop-color="#e0581a"/></linearGradient>
+    <linearGradient id="drape" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f07a22"/><stop offset="1" stop-color="#c8461a"/></linearGradient>
+    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d9a174"/><stop offset="1" stop-color="#bf845a"/></linearGradient>
+    <linearGradient id="hair" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#d9d3ca"/></linearGradient>
+    <radialGradient id="bead" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#b9774a"/><stop offset=".6" stop-color="#6e3a1c"/><stop offset="1" stop-color="#3f1f0e"/></radialGradient>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="512" height="512" fill="url(#night)"/>
+    <circle cx="256" cy="222" r="172" fill="url(#halo)"/>
+    <!-- robe and shoulder drape -->
+    <path d="M60 512 C66 410 150 360 256 358 C362 360 446 410 452 512 Z" fill="url(#robe)"/>
+    <path d="M118 392 C190 360 300 420 372 512 L300 512 C250 452 180 420 96 420 Z" fill="url(#drape)"/>
+    <!-- neck, ears, face -->
+    <rect x="226" y="290" width="60" height="80" rx="20" fill="#bf845a"/>
+    <ellipse cx="183" cy="240" rx="13" ry="22" fill="#c68b60"/>
+    <ellipse cx="329" cy="240" rx="13" ry="22" fill="#c68b60"/>
+    <ellipse cx="256" cy="232" rx="74" ry="88" fill="url(#skin)"/>
+    <!-- mala of rudraksha beads -->
+    <circle cx="176.0" cy="372.0" r="11.5" fill="url(#bead)"/><circle cx="182.6" cy="386.8" r="11.5" fill="url(#bead)"/><circle cx="189.6" cy="401.2" r="11.5" fill="url(#bead)"/><circle cx="197.4" cy="415.5" r="11.5" fill="url(#bead)"/><circle cx="205.9" cy="429.2" r="11.5" fill="url(#bead)"/><circle cx="215.6" cy="442.0" r="11.5" fill="url(#bead)"/><circle cx="226.9" cy="453.5" r="11.5" fill="url(#bead)"/><circle cx="240.4" cy="462.4" r="11.5" fill="url(#bead)"/><circle cx="256.0" cy="466.0" r="11.5" fill="url(#bead)"/><circle cx="271.6" cy="462.4" r="11.5" fill="url(#bead)"/><circle cx="285.1" cy="453.5" r="11.5" fill="url(#bead)"/><circle cx="296.4" cy="442.0" r="11.5" fill="url(#bead)"/><circle cx="306.1" cy="429.2" r="11.5" fill="url(#bead)"/><circle cx="314.6" cy="415.5" r="11.5" fill="url(#bead)"/><circle cx="322.4" cy="401.2" r="11.5" fill="url(#bead)"/><circle cx="329.4" cy="386.8" r="11.5" fill="url(#bead)"/><circle cx="336.0" cy="372.0" r="11.5" fill="url(#bead)"/>
+    <!-- hair and topknot -->
+    <ellipse cx="256" cy="116" rx="36" ry="30" fill="url(#hair)"/>
+    <rect x="232" y="132" width="48" height="12" rx="6" fill="#e0731b"/>
+    <path d="M180 236 C172 162 212 140 256 140 C300 140 340 162 332 236 C320 196 296 176 256 174 C216 176 192 196 180 236 Z" fill="url(#hair)"/>
+    <!-- beard and moustache -->
+    <path d="M184 238 C186 300 206 350 228 392 C238 414 256 436 256 436 C256 436 274 414 284 392 C306 350 326 300 328 238 C318 284 296 300 256 300 C216 300 194 284 184 238 Z" fill="url(#hair)"/>
+    <path d="M256 276 C238 268 214 272 204 292 C222 286 240 290 256 296 C272 290 290 286 308 292 C298 272 274 268 256 276 Z" fill="#f2eee8"/>
+    <!-- closed, meditating eyes and brows -->
+    <path d="M212 232 Q227 242 242 232 M270 232 Q285 242 300 232" fill="none" stroke="#4a2a18" stroke-width="5" stroke-linecap="round"/>
+    <path d="M206 212 Q226 200 244 210 M268 210 Q286 200 306 212" fill="none" stroke="#f4f0ea" stroke-width="9" stroke-linecap="round"/>
+    <!-- tilak -->
+    <path d="M256 166 L256 196" stroke="#f5f1ea" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="256" cy="206" r="6" fill="#d7261e"/>
+  </g>
+</svg>
