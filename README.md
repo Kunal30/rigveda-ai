@@ -40,7 +40,11 @@ To keep the index current as files change, run `rigveda watch` instead of `rigve
 | `rigveda status` | Show how many files of each kind are indexed |
 | `rigveda search "QUESTION"` | Search by meaning and keywords (`--keywords-only` works without Ollama) |
 | `rigveda ask "QUESTION"` | Answer with the local model, citing sources |
-| `rigveda serve` | Browser chat at [http://127.0.0.1:8000](http://127.0.0.1:8000) |
+| `rigveda facts owner "NAME"` | Say whose personal facts to collect (your full name) |
+| `rigveda facts scan` | Look for personal facts in indexed files (also runs after every index) |
+| `rigveda facts list` | Show facts and where they came from (`--status pending`, `--show` for full ID numbers) |
+| `rigveda facts approve/reject ID…` | Decide on facts; `rigveda facts add KEY VALUE` types one in |
+| `rigveda serve` | Browser chat at [http://127.0.0.1:8765](http://127.0.0.1:8765), facts review at `/facts` |
 
 The index lives at `~/.local/share/rigveda/rigveda.db`, readable only by you. Use `--db PATH` before a command to use another file. Models and the Ollama address are set in the config file.
 
@@ -67,13 +71,27 @@ Audio and video need `ffmpeg` (`sudo apt install ffmpeg`). Whisper downloads its
 
 If Ollama isn't running, images are skipped and retried on the next `index`. Everything else still works.
 
+## Your facts profile
+
+To fill in forms (Phase 4), Rigveda keeps a profile of your personal details: name, date of birth, place of birth, phone, email, addresses, passport, driver's license and Social Security numbers, employer and so on.
+
+```bash
+rigveda facts owner "Your Full Name"   # only passages that mention you are read
+rigveda facts scan                      # a couple of minutes for a few hundred files
+rigveda serve                           # then open http://127.0.0.1:8765/facts
+```
+
+The answer model reads each passage that mentions you and lists the facts it states, with the exact words they came from. A fact is kept only if those words and the value really appear in the file, so the model cannot invent one. Redacted numbers (`***-**-1234`), other people's names (a passport also names your parents) and birth dates in the last ten years are dropped. Spelling variants such as `Rd.` and `RD`, or a phone number with and without `+1`, count as one fact.
+
+Every fact starts as **pending**. On the review page, each one shows how many files agree and the words it came from; approve, correct, or reject it. **Only approved facts will be used to fill forms.** ID numbers are masked until you click *show*. Your decisions are kept when files change; a rejected fact stays rejected if it's found again. Audio and video are not scanned.
+
 ## Browser chat
 
 ```bash
 rigveda serve
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Answers list their sources below them. The server only listens on your computer and has no login, so do not expose it to a network.
+Open [http://127.0.0.1:8765](http://127.0.0.1:8765). Answers list their sources below them. The server only listens on your computer and has no login yet, so do not expose it to a network. It refuses requests addressed to any other host name and form posts from other web sites, so a web page you visit cannot read or change your data through it.
 
 ## Development
 

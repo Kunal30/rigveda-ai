@@ -12,6 +12,10 @@ CREATE TABLE IF NOT EXISTS chunks (id INTEGER PRIMARY KEY, path TEXT NOT NULL RE
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text);
 CREATE INDEX IF NOT EXISTS chunks_path_index ON chunks(path);
 CREATE TABLE IF NOT EXISTS embeddings (chunk_id INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE, model TEXT NOT NULL, vector BLOB NOT NULL);
+-- Personal facts (see facts.py). Sources and scans go when their document is re-indexed or deleted.
+CREATE TABLE IF NOT EXISTS facts (id INTEGER PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL, norm TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, decided_at INTEGER, UNIQUE(key, norm));
+CREATE TABLE IF NOT EXISTS fact_sources (fact_id INTEGER NOT NULL REFERENCES facts(id) ON DELETE CASCADE, path TEXT NOT NULL REFERENCES documents(path) ON DELETE CASCADE, location TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL, PRIMARY KEY (fact_id, path, location, evidence));
+CREATE TABLE IF NOT EXISTS fact_scans (path TEXT PRIMARY KEY REFERENCES documents(path) ON DELETE CASCADE, version TEXT NOT NULL, model TEXT NOT NULL, scanned_at INTEGER NOT NULL);
 """
 
 # Columns added after v0.1; older databases are upgraded in place.

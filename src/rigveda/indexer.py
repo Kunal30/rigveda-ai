@@ -121,6 +121,10 @@ def index_paths(db: Path, roots: list[str], config: Config, log: Log = _stderr) 
         embedded = embed_missing(con, config, log)  # backfill chunks indexed before meaning search existed
         if embedded:
             log(f"Prepared {embedded} chunk(s) for meaning search.")
+        if config.scan_facts:
+            from . import facts
+
+            facts.scan(con, config, log)
     finally:
         con.close()
     return stats

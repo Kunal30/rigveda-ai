@@ -6,7 +6,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import extract
+from . import extract, facts
 from .config import Config
 from .embeddings import embed_missing
 from .indexer import Log, _stderr, ignored, index_file, index_paths, remove_path
@@ -38,6 +38,8 @@ def process(db: Path, paths: set[Path], roots: list[Path], config: Config, log: 
             elif not path.exists() and remove_path(con, path):
                 log(f"Removed {path}")
         embed_missing(con, config, log)
+        if config.scan_facts:
+            facts.scan(con, config, log)
     finally:
         con.close()
 

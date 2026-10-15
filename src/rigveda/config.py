@@ -30,6 +30,8 @@ class Config:
     vision_model: str = "qwen2.5vl:7b"
     embedding_model: str = "bge-m3"
     whisper_model: str = "large-v3"
+    owner_name: str = ""  # whose personal facts to collect; see `rigveda facts owner`
+    scan_facts: bool = True  # look for personal facts after indexing
 
     @property
     def database_path(self) -> Path:

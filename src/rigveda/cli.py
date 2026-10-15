@@ -57,6 +57,56 @@ def status_command(db: Path, config: configuration.Config) -> None:
     print(f"Files: {sum(row['files'] for row in rows)} ({kinds}); chunks: {chunks}")
 
 
+def facts_command(args, db: Path, config: configuration.Config) -> None:
+    from . import facts
+
+    if args.action == "owner":
+        if args.items:
+            config.owner_name = " ".join(args.items)
+            configuration.save(config)
+            print(f"Personal facts will be collected for {config.owner_name}. Run `rigveda facts scan --rescan` to look again.")
+        else:
+            print(config.owner_name or "Not set. Set it with `rigveda facts owner \"Your Full Name\"`.")
+        return
+    con = connect(db)
+    try:
+        if args.action == "scan":
+            if not config.owner_name:
+                print("Tip: set your name with `rigveda facts owner \"Your Full Name\"` so only your own details are collected.")
+            scanned = facts.scan(con, config, lambda message: print(message, file=sys.stderr), rescan=args.rescan)
+            pending = len(facts.listing(con, "pending"))
+            print(f"Scanned {scanned} document(s). {pending} fact(s) waiting for review: `rigveda facts list` or "
+                  "the review page at http://127.0.0.1:8765/facts (run `rigveda serve`).")
+        elif args.action == "list":
+            status = None if args.status == "all" else args.status
+            rows = facts.listing(con, status)
+            if not rows:
+                print(f"No {args.status} facts." if status else "No facts yet. Run `rigveda facts scan`.")
+            for fact in rows:
+                value = facts.mask(fact["value"]) if fact["sensitive"] and not args.show else fact["value"]
+                seen = f", in {fact['files']} files" if fact["files"] > 1 else ""
+                print(f"[{fact['id']}] {fact['label']}: {value}  ({fact['status']}{seen})")
+                for source in fact["sources"][:3]:
+                    where = f" ({source['location']})" if source["location"] else ""
+                    print(f"      {source['path']}{where}: \"{source['evidence'][:120]}\"")
+        elif args.action == "add":
+            if len(args.items) < 2:
+                raise SystemExit("Usage: rigveda facts add KEY VALUE. Keys: " + ", ".join(facts.KEYS))
+            fact_id = facts.add_manual(con, args.items[0], " ".join(args.items[1:]))
+            print(f"Added and approved fact {fact_id}.")
+        else:  # approve, reject
+            status = {"approve": "approved", "reject": "rejected"}[args.action]
+            if not args.items:
+                raise SystemExit(f"Usage: rigveda facts {args.action} ID [ID ...]")
+            for item in args.items:
+                facts.decide(con, int(item), status)
+            print(f"Marked {len(args.items)} fact(s) {status}.")
+    except (KeyError, ValueError) as error:
+        raise SystemExit(f"{error}") from error
+    finally:
+        con.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Private, local-first filesystem assistant.")
     parser.add_argument("--db", help="Index location (default: from config, ~/.local/share/rigveda/rigveda.db)")
@@ -70,6 +120,14 @@ def main() -> None:
     cmd_watch = commands.add_parser("watch", help="Index the watched folders (or the paths given), then keep the index updated as files change.")
     cmd_watch.add_argument("paths", nargs="*")
     commands.add_parser("status", help="Show what is indexed.")
+    cmd_facts = commands.add_parser("facts", help="Your personal facts profile, used to fill forms.",
+        description="scan: look for personal facts in indexed documents; list: show them; approve/reject IDs; "
+                    "add KEY VALUE: type one in; owner NAME: whose facts to collect. Review in the browser at /facts.")
+    cmd_facts.add_argument("action", choices=["scan", "list", "approve", "reject", "add", "owner"])
+    cmd_facts.add_argument("items", nargs="*")
+    cmd_facts.add_argument("--status", choices=["pending", "approved", "rejected", "all"], default="all")
+    cmd_facts.add_argument("--show", action="store_true", help="Show ID numbers in full")
+    cmd_facts.add_argument("--rescan", action="store_true", help="Scan every document again")
     cmd_search = commands.add_parser("search", help="Search indexed files.")
     cmd_search.add_argument("question"); cmd_search.add_argument("--limit", type=int, default=5)
     cmd_search.add_argument("--keywords-only", action="store_true", help="Skip meaning search")
@@ -78,7 +136,7 @@ def main() -> None:
     cmd_ask.add_argument("--model"); cmd_ask.add_argument("--ollama")
     cmd_serve = commands.add_parser("serve", help="Run the local browser chat interface.")
     cmd_serve.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
-    cmd_serve.add_argument("--port", type=int, default=8000)
+    cmd_serve.add_argument("--port", type=int, default=8765)
     cmd_serve.add_argument("--limit", type=int, default=12)
     cmd_serve.add_argument("--model"); cmd_serve.add_argument("--ollama")
     args = parser.parse_args()
@@ -94,6 +152,9 @@ def main() -> None:
         if args.action != "list" and not args.paths:
             parser.error(f"folders {args.action} needs at least one PATH")
         folders_command(args, config)
+        return
+    if args.command == "facts":
+        facts_command(args, db, config)
         return
     if args.command == "status":
         status_command(db, config)
