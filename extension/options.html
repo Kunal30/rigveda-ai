@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Rigveda AI options</title><style>
+body{margin:0;background:#f4f1ec;color:#1d1b2e;font:15px system-ui,sans-serif}main{max-width:560px;margin:40px auto;padding:0 18px}
+h1{font-family:"EB Garamond",Georgia,serif;font-weight:500;font-size:2rem;display:flex;align-items:center;gap:12px}h1 img{width:48px;height:48px;border-radius:12px}
+label{display:block;margin:18px 0 6px;font-weight:600}input{font:inherit;width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #c9c2b6;border-radius:9px}
+code{background:#e9e3d8;padding:1px 6px;border-radius:5px}p{color:#5b5870}button{font:inherit;font-weight:700;margin-top:20px;padding:10px 18px;border:0;border-radius:10px;background:#2a2160;color:#fff;cursor:pointer}
+#result{margin-top:14px;font-weight:600}#result.bad{color:#b0302a}#result.ok{color:#1d7a46}#sites{margin-top:28px}
+</style></head><body><main>
+<h1><img src="icons/icon-48.png" alt="">Rigveda AI</h1>
+<p>The extension asks Rigveda AI on this computer for your <b>approved</b> facts. Nothing leaves your machine.</p>
+<label for="token">Token</label><input id="token" type="password" autocomplete="off" placeholder="Paste the output of: rigveda token">
+<p>In a terminal, run <code>rigveda token</code> and paste what it prints.</p>
+<label for="port">Port</label><input id="port" type="number" min="1" max="65535">
+<p>Where <code>rigveda serve</code> listens; 8765 unless you changed it.</p>
+<button id="save">Save and test</button><div id="result"></div>
+<div id="sites"></div>
+</main><script src="options.js"></script></body></html>

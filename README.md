@@ -44,6 +44,7 @@ To keep the index current as files change, run `rigveda watch` instead of `rigve
 | `rigveda facts scan` | Look for personal facts in indexed files (also runs after every index) |
 | `rigveda facts list` | Show facts and where they came from (`--status pending`, `--show` for full ID numbers) |
 | `rigveda facts approve/reject ID…` | Decide on facts; `rigveda facts add KEY VALUE` types one in |
+| `rigveda token [--new]` | Show (or replace) the secret the browser extension needs |
 | `rigveda serve` | Browser chat at [http://127.0.0.1:8765](http://127.0.0.1:8765), facts review at `/facts` |
 
 The index lives at `~/.local/share/rigveda/rigveda.db`, readable only by you. Use `--db PATH` before a command to use another file. Models and the Ollama address are set in the config file.
@@ -84,6 +85,34 @@ rigveda serve                           # then open http://127.0.0.1:8765/facts
 The answer model reads each passage that mentions you and lists the facts it states, with the exact words they came from. A fact is kept only if those words and the value really appear in the file, so the model cannot invent one. Redacted numbers (`***-**-1234`), other people's names (a passport also names your parents) and birth dates in the last ten years are dropped. Spelling variants such as `Rd.` and `RD`, or a phone number with and without `+1`, count as one fact.
 
 Every fact starts as **pending**. On the review page, each one shows how many files agree and the words it came from; approve, correct, or reject it. **Only approved facts will be used to fill forms.** ID numbers are masked until you click *show*. Your decisions are kept when files change; a rejected fact stays rejected if it's found again. Audio and video are not scanned.
+
+## Form autofill (Chrome extension)
+
+The extension in [`extension/`](extension) suggests your **approved** facts as you fill in web forms. Click into a field, and a suggestion appears under it with the file it came from: **Tab** fills it and moves to the next field, **↑ ↓** choose between suggestions, **Esc** closes. *Fill this page* in the extension's menu fills every empty field it recognises at once and outlines them in orange for you to check.
+
+It never submits a form, and never fills passwords, one-time codes, payment cards, or fields asking for someone else's details (father's name, emergency contact). Dates follow the field's format (`MM/DD/YYYY`, `DD/MM/YYYY`, date pickers, separate day/month/year boxes), dropdowns get the matching option (`WA` or `Washington`, `IN` for an Indian nationality), and all parts of an address come from the same, newest home.
+
+Install it once:
+
+1. Keep `rigveda serve` running (see *Run in the background* below).
+2. In Chrome, open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and choose the `extension` folder.
+3. Run `rigveda token`, open the extension's **Options**, paste the token, and click **Save and test**.
+4. Try it on [http://127.0.0.1:8765/test-form](http://127.0.0.1:8765/test-form).
+
+The token keeps other programs and web sites from asking for your details: only the extension holds it, and only its background worker talks to the server. Turn suggestions off for a site from the extension's menu. To change the token, run `rigveda token --new`, restart the server, and paste the new one.
+
+## Run in the background
+
+Two systemd user services keep Rigveda running after you log in. The files are in [`contrib/systemd`](contrib/systemd):
+
+```bash
+ln -s ~/github/rigveda-ai/.venv/bin/rigveda ~/.local/bin/rigveda
+cp contrib/systemd/*.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now rigveda.service rigveda-serve.service
+```
+
+`rigveda.service` keeps the index up to date (`rigveda watch`) and `rigveda-serve.service` runs the server for the chat, the facts page and the extension. Logs: `journalctl --user -u rigveda -u rigveda-serve`.
 
 ## Browser chat
 

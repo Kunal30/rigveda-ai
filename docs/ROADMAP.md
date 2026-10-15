@@ -86,11 +86,15 @@ A file watcher (`watchdog`) re-indexes changed files in the background.
 
 ### Security, because a local server is reachable from any web page
 
-- Every request must carry a secret token, generated on first run and pasted into
-  the extension. Without it, any website's JavaScript could query
-  `127.0.0.1:8765` and read your documents.
-- CORS allows only the extension's origin. The server binds to `127.0.0.1` only.
-- Never suggest into password fields or card-number/CVV fields; per-site off switch.
+- Form suggestions (`/api/suggest`) need a secret token, generated on first run
+  (`rigveda token`) and pasted into the extension. Only the extension's background
+  worker holds it and makes requests, so the server sends no CORS headers at all.
+- The chat and facts pages have no login yet. Requests addressed to another host
+  name are refused (DNS rebinding), and posts must be JSON, which other web sites
+  cannot send without a CORS permission that is never granted. The server binds
+  to `127.0.0.1` only.
+- Never suggest into password, one-time-code or card fields, or fields about other
+  people; only real key presses accept a suggestion; per-site off switch.
 - The index database holds sensitive text: keep it under `~/.local/share/rigveda`
   with `0600` permissions, and optionally encrypt it with SQLCipher later.
 
@@ -102,7 +106,7 @@ A file watcher (`watchdog`) re-indexes changed files in the background.
 | 1. Multimedia ingestion ✅ | PDF, PPTX, XLSX, images, audio and video extractors; file watcher | a video and a slide deck are searchable, with timestamp and slide citations |
 | 2. Semantic search ✅ | embeddings + hybrid ranking; better chat answers | finds the right file for a paraphrased question |
 | 3. Facts profile ✅ | extraction + review page | name, DOB, address, IDs appear for approval with their source |
-| 4. Form autofill | `/suggest` with token auth + Chrome extension | a test form gets correct suggestions accepted with Tab |
+| 4. Form autofill ✅ | `/suggest` with token auth + Chrome extension | a test form gets correct suggestions accepted with Tab |
 | 5. Writing help | grounded completions in text areas; optional desktop hotkey popup | |
 | 6. All your devices | Tailscale private network + token login; installable mobile web app; open source files from the phone; Siri Shortcut for voice questions | ask a question from the iPhone away from home |
 
