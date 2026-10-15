@@ -136,6 +136,13 @@ def main() -> None:
     cmd_ask = commands.add_parser("ask", help="Ask a local Ollama model about indexed files.")
     cmd_ask.add_argument("question"); cmd_ask.add_argument("--limit", type=int, default=12)
     cmd_ask.add_argument("--model"); cmd_ask.add_argument("--ollama")
+    cmd_write = commands.add_parser("write", help="Draft text from your files. Without TEXT, open the writing window.")
+    cmd_write.add_argument("text", nargs="?", help="What to write, e.g. \"a short bio for a conference\"")
+    cmd_write.add_argument("--port", type=int, default=8765, help="Port of `rigveda serve`, for the window")
+    cmd_write.add_argument("--model"); cmd_write.add_argument("--ollama")
+    cmd_hotkey = commands.add_parser("hotkey", help="A desktop keyboard shortcut (GNOME) that opens the writing window.")
+    cmd_hotkey.add_argument("--keys", default="<Super><Alt>r", help="Shortcut in GNOME's notation (default: <Super><Alt>r)")
+    cmd_hotkey.add_argument("--remove", action="store_true", help="Remove the shortcut")
     cmd_serve = commands.add_parser("serve", help="Run the local browser chat interface.")
     cmd_serve.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
     cmd_serve.add_argument("--port", type=int, default=8765)
@@ -160,6 +167,30 @@ def main() -> None:
         print(token)
         print(f"Paste this into the Rigveda AI extension's options. Stored in {configuration.token_path()}"
               + (". Restart `rigveda serve` to use the new token." if args.new else "."), file=sys.stderr)
+        return
+    if args.command == "hotkey":
+        from . import desktop
+        if args.remove:
+            print("Shortcut removed." if desktop.remove_hotkey() else "There was no Rigveda shortcut.")
+            return
+        import shutil
+        program = shutil.which("rigveda")
+        command = f"{program} write" if program else f"{sys.executable} -m rigveda write"
+        desktop.install_hotkey(command, args.keys)
+        keys = "+".join(part.title() for part in args.keys.replace("><", "+").strip("<>").replace(">", "+").split("+"))
+        print(f"Press {keys} anywhere to open the writing window. "
+              "Change or remove it in Settings → Keyboard → Custom Shortcuts, or with `rigveda hotkey --remove`.")
+        return
+    if args.command == "write":
+        if not args.text:
+            from .desktop import open_window
+            open_window(args.port)
+            return
+        from .write import write
+        try:
+            print(write(db, config, {"instruction": args.text})["text"])
+        except OllamaError as error:
+            raise SystemExit(str(error))
         return
     if args.command == "facts":
         facts_command(args, db, config)

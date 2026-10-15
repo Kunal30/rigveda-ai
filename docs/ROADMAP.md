@@ -107,7 +107,7 @@ A file watcher (`watchdog`) re-indexes changed files in the background.
 | 2. Semantic search ✅ | embeddings + hybrid ranking; better chat answers | finds the right file for a paraphrased question |
 | 3. Facts profile ✅ | extraction + review page | name, DOB, address, IDs appear for approval with their source |
 | 4. Form autofill ✅ | `/suggest` with token auth + Chrome extension | a test form gets correct suggestions accepted with Tab |
-| 5. Writing help | grounded completions in text areas; optional desktop hotkey popup | |
+| 5. Writing help ✅ | drafts and continuations in text boxes (Alt+Shift+R in the extension); desktop hotkey writing window | a text box gets a draft grounded in your files, with placeholders where they say nothing |
 | 6. All your devices | Tailscale private network + token login; installable mobile web app; open source files from the phone; Siri Shortcut for voice questions | ask a question from the iPhone away from home |
 
 ## Models to pull

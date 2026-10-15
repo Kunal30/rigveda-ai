@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import facts, suggest
+from . import facts, suggest, write
 from .config import Config
 from .llm import OllamaError, ask
 from .search import cite, search
@@ -102,11 +102,11 @@ load().then(()=>{for(const[k,label]of Object.entries(keys))select.append(new Opt
 
 TEST_FORM_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Rigveda AI · Test form</title><style>
+<title>Test form</title><style>
 body{margin:0;background:#f4f1ec;color:#1d1b2e;font:15px system-ui,sans-serif}main{max-width:720px;margin:auto;padding:28px 18px 60px}
 h1{font-size:1.5rem}p{color:#5b5870}fieldset{border:1px solid #d8d2c8;border-radius:12px;margin:18px 0;padding:14px 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
 legend{font-weight:700;padding:0 6px}label{display:flex;flex-direction:column;gap:4px;font-size:.85rem;color:#3a3750}
-input,select{font:inherit;padding:8px 10px;border:1px solid #c9c2b6;border-radius:8px;background:#fff}button{font:inherit;padding:10px 18px;border-radius:10px;border:0;background:#2a2160;color:#fff;font-weight:700}
+input,select,textarea,.editor{font:inherit;padding:8px 10px;border:1px solid #c9c2b6;border-radius:8px;background:#fff}textarea,.editor{min-height:110px;grid-column:1/-1}.editor{line-height:1.45}fieldset label.wide{grid-column:1/-1}button{font:inherit;padding:10px 18px;border-radius:10px;border:0;background:#2a2160;color:#fff;font-weight:700}
 #result{margin-top:14px;color:#a33}
 </style></head><body><main>
 <h1>Test form</h1><p>Click into a field: Rigveda suggests a value from your approved facts. <b>Tab</b> accepts, <b>Esc</b> dismisses. Or use <i>Fill this page</i> in the extension's menu. Nothing here is sent anywhere, and the extension never submits forms.</p>
@@ -126,6 +126,10 @@ input,select{font:inherit;padding:8px 10px;border:1px solid #c9c2b6;border-radiu
 <fieldset><legend>Documents</legend>
 <label>Passport number<input name="passportNo"></label><label>Passport expiry date<input name="passport_expiry" placeholder="DD/MM/YYYY"></label>
 <label>Driver's license number<input name="dl_number"></label></fieldset>
+<fieldset><legend>Writing help</legend>
+<p style="grid-column:1/-1;margin:0">Click in a box and press <b>Alt+Shift+R</b> (or right-click → <i>Write with Rigveda</i>). Empty: a draft from your files. With text: the next sentences. <b>Tab</b> inserts.</p>
+<label class="wide">Tell us about your most recent role and what you worked on.<textarea name="experience" maxlength="1500"></textarea></label>
+<label class="wide"><span id="coverLabel">Cover letter for a software engineering role</span><div class="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-labelledby="coverLabel"></div></label></fieldset>
 <fieldset><legend>Never filled</legend>
 <label>Password<input type="password" name="password"></label><label>Card number<input name="cardnumber" autocomplete="cc-number"></label>
 <label>Father's name<input name="father"></label></fieldset>
@@ -133,6 +137,41 @@ input,select{font:inherit;padding:8px 10px;border:1px solid #c9c2b6;border-radiu
 </form>
 <script>document.querySelector('#form').addEventListener('submit',e=>{e.preventDefault();document.querySelector('#result').textContent='Submitted by you (the extension never submits). Nothing was sent.'})</script>
 </main></body></html>"""
+
+
+WRITE_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Write with Rigveda</title><style>
+:root{color-scheme:dark;--bg:#14112e;--panel:#1d1940;--line:#3a3266;--text:#f4f1ea;--muted:#b8b0d8;--accent:#f39a33}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,sans-serif}
+main{padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-height:100vh}h1{margin:0;font:500 1.25rem "EB Garamond",Georgia,serif}
+textarea{font:inherit;color:inherit;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;resize:vertical;width:100%}
+#ask{min-height:70px}#out{min-height:160px;flex:1}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+button{font:inherit;font-weight:700;border:0;border-radius:9px;padding:8px 14px;cursor:pointer;background:var(--accent);color:#1d1300}
+button.plain{background:var(--panel);color:var(--text);border:1px solid var(--line)}button:disabled{opacity:.5;cursor:wait}
+.note{color:var(--muted);font-size:12px}#sources{color:var(--muted);font-size:12px;word-break:break-all}
+</style></head><body><main>
+<h1>Write with Rigveda</h1>
+<textarea id="ask" placeholder="What should I write? e.g. a three-sentence bio for a conference, or a reply saying I can start in January" autofocus></textarea>
+<div class="row"><button id="go">Write</button><span class="note">Ctrl+Enter · from your files, on this computer</span></div>
+<textarea id="out" placeholder="Your draft appears here. Edit it, then copy." hidden></textarea>
+<div class="row" id="actions" hidden><button id="copy">Copy</button><button class="plain" id="again">Try again</button><span class="note" id="done"></span></div>
+<div id="sources"></div>
+</main><script>
+const $=id=>document.getElementById(id);
+async function run(){const instruction=$('ask').value.trim();if(!instruction||$('go').disabled)return;
+  $('go').disabled=$('again').disabled=true;$('go').textContent='Writing…';$('done').textContent='';
+  try{const r=await fetch('/api/write',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction})});
+    const d=await r.json();if(!r.ok)throw new Error(d.error||'Request failed');
+    $('out').hidden=$('actions').hidden=false;$('out').value=d.text;
+    $('sources').textContent=d.sources.length?'From: '+d.sources.map(s=>s.name).join(', '):'Nothing relevant in your files; this draft is general.';
+  }catch(e){$('out').hidden=false;$('out').value='';$('sources').textContent=e.message}
+  finally{$('go').disabled=$('again').disabled=false;$('go').textContent='Write'}}
+$('go').onclick=run;$('again').onclick=run;
+$('ask').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();run()}});
+$('copy').onclick=async()=>{try{await navigator.clipboard.writeText($('out').value);$('done').textContent='Copied. Paste it with Ctrl+V.'}
+  catch{$('out').select();document.execCommand('copy');$('done').textContent='Copied.'}};
+</script></body></html>"""
 
 
 @dataclass(frozen=True)
@@ -216,6 +255,26 @@ def make_handler(config: ServerConfig):
             finally:
                 con.close()
 
+        def write_post(self) -> None:
+            try:
+                payload = self.body()
+                for name in ("before", "after", "instruction", "title", "site"):
+                    if not isinstance(payload.get(name, ""), str):
+                        raise ValueError(f"{name} must be text.")
+                if not isinstance(payload.get("field") or {}, dict):
+                    raise ValueError("field must be an object.")
+                if not (payload.get("before", "").strip() or payload.get("instruction", "").strip()
+                        or write.field_question(payload.get("field") or {})):
+                    raise ValueError("Say what to write, or send the text written so far.")
+            except (ValueError, json.JSONDecodeError) as error:
+                self.respond(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                return
+            settings = config.settings or Config(database=str(config.database), model=config.model, ollama=config.ollama)
+            try:
+                self.respond(HTTPStatus.OK, write.write(config.database, settings, payload))
+            except OllamaError as error:
+                self.respond(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(error)})
+
         def do_GET(self) -> None:
             if not self.trusted():
                 return
@@ -227,6 +286,9 @@ def make_handler(config: ServerConfig):
                     finally:
                         con.close()
                     self.respond(HTTPStatus.OK, {"ok": True, "approved": approved})
+                return
+            if self.path == "/write":
+                self.page(WRITE_HTML)
                 return
             if self.path == "/test-form":
                 self.page(TEST_FORM_HTML)
@@ -289,6 +351,9 @@ def make_handler(config: ServerConfig):
             if self.path == "/api/suggest":
                 if self.authorized():
                     self.suggest_post()
+                return
+            if self.path == "/api/write":
+                self.write_post()
                 return
             if self.path == "/api/facts" or re.fullmatch(r"/api/facts/\d+", self.path):
                 self.facts_post()

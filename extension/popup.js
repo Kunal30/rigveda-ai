@@ -22,7 +22,7 @@ const send = message => new Promise(resolve => chrome.runtime.sendMessage(messag
   $('fill').addEventListener('click', async () => {
     $('fill').disabled = true;
     try {
-      const reply = await chrome.tabs.sendMessage(tab.id, {type: 'fillPage'});
+      const reply = await chrome.tabs.sendMessage(tab.id, {type: 'fillPage'}, {frameId: 0});
       $('result').textContent = reply.filled
         ? `Filled ${reply.filled} of ${reply.fields} empty fields, outlined in orange. Check them, then submit yourself.`
         : 'No empty fields here match your approved facts.';

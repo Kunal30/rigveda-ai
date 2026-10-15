@@ -6,7 +6,7 @@ Rigveda AI is a private assistant for the files on your Ubuntu machine. You choo
 
 Nothing is uploaded. Text extraction, OCR, transcription and answers all run on your computer. It only reads the folders you add, never your whole home directory.
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for where the project is going, including browser form autofill.
+For how it fits together, read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For where it is going, see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Quick start
 
@@ -45,6 +45,8 @@ To keep the index current as files change, run `rigveda watch` instead of `rigve
 | `rigveda facts list` | Show facts and where they came from (`--status pending`, `--show` for full ID numbers) |
 | `rigveda facts approve/reject ID…` | Decide on facts; `rigveda facts add KEY VALUE` types one in |
 | `rigveda token [--new]` | Show (or replace) the secret the browser extension needs |
+| `rigveda write ["WHAT"]` | Draft text from your files; without text, open the writing window |
+| `rigveda hotkey [--remove]` | A desktop shortcut (Super+Alt+R on GNOME) that opens the writing window |
 | `rigveda serve` | Browser chat at [http://127.0.0.1:8765](http://127.0.0.1:8765), facts review at `/facts` |
 
 The index lives at `~/.local/share/rigveda/rigveda.db`, readable only by you. Use `--db PATH` before a command to use another file. Models and the Ollama address are set in the config file.
@@ -100,6 +102,14 @@ Install it once:
 4. Try it on [http://127.0.0.1:8765/test-form](http://127.0.0.1:8765/test-form).
 
 The token keeps other programs and web sites from asking for your details: only the extension holds it, and only its background worker talks to the server. Turn suggestions off for a site from the extension's menu. To change the token, run `rigveda token --new`, restart the server, and paste the new one.
+
+## Writing help
+
+In a longer text box (an application question, a cover letter, an email) press **Alt+Shift+R**, or right-click and choose **Write with Rigveda**. In an empty box you get a draft that answers the box's question; with text already there, you get the next sentences from where your cursor is. **Tab** inserts it, **Alt+Shift+R** again gives another, **Esc** discards. The suggestion says which files it drew on. Change the shortcut at `chrome://extensions/shortcuts`.
+
+Drafts use only what your files say. When your name is set (`rigveda facts owner`), only passages that mention you are used, so a textbook or a paper in your folders is never written up as your own work, and film and audio transcripts are never used. Where a detail is missing, the draft leaves a placeholder such as `[your role]` for you to fill in. ID numbers are never included. Add a folder with your résumé, project notes or past letters to get drafts about your work. Always read a draft before sending it.
+
+Outside Chrome, `rigveda hotkey` adds a GNOME shortcut, **Super+Alt+R**, that opens a small writing window: say what you need, then copy the draft and paste it where you were. (GNOME on Wayland doesn't let one app type into another app's text boxes, so a window with Copy is the most it can do.) `rigveda write "a two-line bio"` prints a draft in the terminal.
 
 ## Run in the background
 
