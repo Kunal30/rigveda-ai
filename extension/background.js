@@ -34,6 +34,9 @@ async function handle(message, sender) {
     case 'suggest':
       if (s.disabledSites.includes(site)) return {results: message.fields.map(() => [])};
       return api('/api/suggest', {fields: message.fields});
+    case 'write':
+      if (s.disabledSites.includes(site)) throw new Error(`Rigveda is switched off on ${site}.`);
+      return api('/api/write', {...message.request, site});
     case 'status':
       return api('/api/suggest/status');
     case 'setSite': {
@@ -51,3 +54,19 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   handle(message, sender).then(reply, error => reply({error: error.message}));
   return true; // reply asynchronously
 });
+
+// Writing help starts from the keyboard shortcut (Alt+Shift+R, changeable at chrome://extensions/shortcuts) or
+// the right-click menu. Both come from the browser itself, so a web page can't start one.
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({id: 'write', title: 'Write with Rigveda', contexts: ['editable']});
+});
+
+function startWriting(tab, frameId) {
+  if (tab?.id === undefined || !tab.url?.startsWith('http')) return;
+  // From the shortcut every frame hears it, and the one holding the keyboard focus answers.
+  const target = frameId === undefined ? {} : {frameId};
+  chrome.tabs.sendMessage(tab.id, {type: 'startWriting', anyFrame: frameId === undefined}, target).catch(() => {});
+}
+
+chrome.commands.onCommand.addListener((command, tab) => { if (command === 'write') startWriting(tab); });
+chrome.contextMenus.onClicked.addListener((info, tab) => { if (info.menuItemId === 'write') startWriting(tab, info.frameId); });
