@@ -23,7 +23,7 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("WebKit2", "4.1")
 from gi.repository import Gdk, GLib, Gtk, WebKit2  # noqa: E402
 
-ORB = (132, 132)  # the orb plus room for its glow
+ORB = (168, 168)  # the orb plus room for its glow and bounce
 PANEL = (440, 780)
 MARGIN = 24
 STATE = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "rigveda" / "orb.json"
@@ -57,6 +57,8 @@ class Orb(Gtk.Window):
         content.connect("script-message-received::orb", self.message)
         self.view = WebKit2.WebView.new_with_user_content_manager(content)
         self.view.set_background_color(Gdk.RGBA(0, 0, 0, 0))
+        # Draw on the CPU: keeps the orb off the NVIDIA card, whose video decoder froze VLC once while it started.
+        self.view.get_settings().set_hardware_acceleration_policy(WebKit2.HardwareAccelerationPolicy.NEVER)
         self.view.connect("load-failed", self.offline)
         self.view.connect("context-menu", lambda *args: True)  # no "Reload / Inspect" menu on right-click
         self.add(self.view)
@@ -93,12 +95,13 @@ class Orb(Gtk.Window):
         return (monitor or display.get_monitor(0)).get_workarea()
 
     def saved_position(self) -> tuple[int, int]:
+        area = self.workarea()
         try:
             x, y = json.loads(STATE.read_text())["position"]
-            return int(x), int(y)
-        except (OSError, ValueError, KeyError, TypeError):
-            area = self.workarea()  # bottom-right corner by default
+        except (OSError, ValueError, KeyError, TypeError):  # bottom-right corner by default
             return area.x + area.width - ORB[0] - MARGIN, area.y + area.height - ORB[1] - MARGIN
+        # Keep it on screen, e.g. after the orb grew or a monitor was unplugged.
+        return (min(max(int(x), area.x), area.x + area.width - ORB[0]), min(max(int(y), area.y), area.y + area.height - ORB[1]))
 
     def remember(self, widget, event) -> bool:
         if not self.expanded:

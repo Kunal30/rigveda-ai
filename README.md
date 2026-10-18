@@ -47,7 +47,7 @@ To keep the index current as files change, run `rigveda watch` instead of `rigve
 | `rigveda token [--new]` | Show (or replace) the secret the browser extension needs |
 | `rigveda write ["WHAT"]` | Draft text from your files; without text, open the writing window |
 | `rigveda hotkey [--remove]` | A desktop shortcut (Super+Alt+R on GNOME) that opens the writing window |
-| `rigveda orb` | A floating assistant on your screen: live stats and a chat (`--autostart` to start it at login) |
+| `rigveda orb` | A floating assistant on your screen: live stats and a chat (`--autostart` keeps it there after every login) |
 | `rigveda serve` | Browser chat at [http://127.0.0.1:8765](http://127.0.0.1:8765), facts review at `/facts`, live status at [`/status`](http://127.0.0.1:8765/status) |
 
 The index lives at `~/.local/share/rigveda/rigveda.db`, readable only by you. Use `--db PATH` before a command to use another file. Models and the Ollama address are set in the config file.
@@ -114,7 +114,7 @@ Outside Chrome, `rigveda hotkey` adds a GNOME shortcut, **Super+Alt+R**, that op
 
 ## Floating orb
 
-`rigveda orb` puts a small glowing orb in the bottom-right corner of your screen. It stays above other windows and on every workspace. Its three outer arcs turn from green to amber or red if the file watcher, the server or the local models stop. Drag it anywhere (it remembers where), and click it to open a translucent panel with your index stats, 30 days of activity, any problems, and a chat for asking about your files. **Esc** or **–** shrinks it back. `rigveda orb --autostart` also starts it at every login; `rigveda orb --no-autostart` stops that. The same panel opens in a browser at [http://127.0.0.1:8765/orb](http://127.0.0.1:8765/orb).
+`rigveda orb` puts a small glowing orb in the bottom-right corner of your screen. It stays above other windows and on every workspace. Its three outer arcs turn from green to amber or red if the file watcher, the server or the local models stop. Drag it anywhere (it remembers where), and click it to open a translucent panel with your index stats, 30 days of activity, any problems, and a chat for asking about your files. **Esc** or **–** shrinks it back. `rigveda orb --autostart` keeps it on screen from every login on: it installs and enables the `rigveda-orb.service` systemd user service, which restarts the orb if it crashes. *Quit* in the panel closes it until your next login. `rigveda orb --no-autostart` removes the service. The same panel opens in a browser at [http://127.0.0.1:8765/orb](http://127.0.0.1:8765/orb).
 
 It needs GTK and WebKitGTK for the system Python (`sudo apt install python3-gi gir1.2-webkit2-4.1`, already on Ubuntu desktops). GNOME on Wayland doesn't let an app stay on top or choose its position, so the orb runs through XWayland, where both work.
 

@@ -145,7 +145,8 @@ def main() -> None:
     cmd_hotkey.add_argument("--remove", action="store_true", help="Remove the shortcut")
     cmd_orb = commands.add_parser("orb", help="A floating assistant that stays on screen: your stats and a chat.")
     cmd_orb.add_argument("--port", type=int, default=8765, help="Port of `rigveda serve`")
-    cmd_orb.add_argument("--autostart", action="store_true", help="Also start it at every login")
+    cmd_orb.add_argument("--autostart", action="store_true", help="Keep it on screen from every login on (a systemd user service)")
+    cmd_orb.add_argument("--foreground", action="store_true", help=argparse.SUPPRESS)  # how the service runs it
     cmd_orb.add_argument("--no-autostart", action="store_true", help="Stop starting it at login")
     cmd_serve = commands.add_parser("serve", help="Run the local browser chat interface.")
     cmd_serve.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
@@ -190,11 +191,14 @@ def main() -> None:
         if args.no_autostart:
             print("The orb won't start at login any more." if desktop.remove_autostart() else "The orb wasn't set to start at login.")
             return
-        desktop.launch_orb(args.port)
+        if args.foreground:
+            desktop.run_orb(args.port)
         if args.autostart:
             desktop.install_autostart(args.port)
+        else:
+            desktop.launch_orb(args.port)
         print("The orb is in the bottom-right corner of your screen: drag it anywhere, click it to open, Esc to close."
-              + (" It will start at every login." if args.autostart else ""))
+              + (" It will be there after every login and restarts itself if it crashes." if args.autostart else ""))
         return
     if args.command == "write":
         if not args.text:

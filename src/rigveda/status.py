@@ -1,5 +1,5 @@
 """Health of the running app for the status page: services, index size, facts, skipped files and recent log lines,
-plus live CPU, GPU and memory use for the orb.
+plus live CPU, GPU and memory use for the orb, overall and per app.
 
 Service state and log lines come from systemd and the journal. Where those aren't available (tests, a manual
 `rigveda serve`), the services read as "unknown" and the log sections are empty.
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import pwd
 import re
 import sqlite3
 import subprocess
@@ -157,4 +158,119 @@ def gpu() -> dict | None:
 
 
 def system() -> dict:
-    return {"cpu": {"percent": cpu_percent(), "threads": os.cpu_count()}, "memory": memory(), "gpu": gpu()}
+    return {"cpu": {"percent": cpu_percent(), "threads": _cpus()}, "memory": memory(), "gpu": gpu()}
+
+
+TICKS = os.sysconf("SC_CLK_TCK")
+APPS = 25  # per measure
+PROCESSES_PER_APP = 25
+PAGE = os.sysconf("SC_PAGE_SIZE")
+_procs = {"ticks": {}, "time": 0.0, "cpu": {}}
+_procs_lock = threading.Lock()
+
+
+def _cpus() -> int:
+    with open("/proc/stat") as stat:
+        return sum(1 for line in stat if line.startswith("cpu") and line[3:4].isdigit()) or 1
+
+
+def _app_name(command: list[str], comm: str) -> str:
+    """What to group a process under: the program's name, or the script's for Python and Node."""
+    if not command:
+        return "Kernel threads"
+    if len(command) == 1 and " " in command[0]:  # Chrome and others rewrite their command line as one string
+        command = command[0].split()
+    program = command[0].rsplit("/", 1)[-1]
+    if program.startswith(("python", "node")) and len(command) > 1:
+        script = next((arg for arg in command[1:] if not arg.startswith("-")), "")
+        if script:
+            return script.rsplit("/", 1)[-1] if script != "-m" else program
+    return program or comm
+
+
+def _read_processes() -> list[dict]:
+    boot = time.time() - float(open("/proc/uptime").read().split()[0])
+    users: dict[int, str] = {}
+    result = []
+    for entry in os.scandir("/proc"):
+        if not entry.name.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry.name}/stat") as file:
+                raw = file.read()
+            with open(f"/proc/{entry.name}/statm") as file:
+                rss = int(file.read().split()[1]) * PAGE
+            with open(f"/proc/{entry.name}/cmdline", "rb") as file:
+                command = [part.decode(errors="replace") for part in file.read().split(b"\0") if part]
+            uid = entry.stat().st_uid
+        except (OSError, ValueError, IndexError):
+            continue  # the process ended while being read
+        comm = raw[raw.index("(") + 1:raw.rindex(")")]
+        fields = raw[raw.rindex(")") + 2:].split()
+        if uid not in users:
+            try:
+                users[uid] = pwd.getpwuid(uid).pw_name
+            except KeyError:
+                users[uid] = str(uid)
+        result.append({"pid": int(entry.name), "name": _app_name(command, comm), "state": fields[0],
+                       "ticks": int(fields[11]) + int(fields[12]), "threads": int(fields[17]),
+                       "started": int(boot + int(fields[19]) / TICKS), "rss": rss, "user": users[uid],
+                       "command": " ".join(command)[:300] or f"[{comm}]"})
+    return result
+
+
+def gpu_processes() -> dict[int, dict]:
+    """GPU compute use (%) and memory (bytes) per process id, from nvidia-smi."""
+    usage = {}
+    for line in _run("nvidia-smi", "pmon", "-c", "1", "-s", "um").splitlines():
+        parts = line.split()
+        if line.startswith("#") or len(parts) < 10 or not parts[1].isdigit():
+            continue
+        busy = float(parts[3]) if parts[3] != "-" else 0.0
+        memory = int(parts[9]) * 2**20 if parts[9].isdigit() else 0
+        usage[int(parts[1])] = {"gpu": busy, "gpu_memory": memory}
+    return usage
+
+
+def processes() -> dict:
+    """Every process with its CPU use since the last call (% of the whole machine), memory and GPU use, grouped
+    by app, biggest CPU users first."""
+    with _procs_lock:
+        if not _procs["ticks"]:
+            _procs["ticks"], _procs["time"] = {proc["pid"]: proc["ticks"] for proc in _read_processes()}, time.monotonic()
+            time.sleep(0.25)
+        now = time.monotonic()
+        current = _read_processes()
+        elapsed = now - _procs["time"]
+        if elapsed >= 0.5 or not _procs["cpu"]:  # several viewers polling at once share a reading
+            capacity = elapsed * TICKS * _cpus()
+            _procs["cpu"] = {proc["pid"]: round(100 * max(0, proc["ticks"] - _procs["ticks"].get(proc["pid"], proc["ticks"])) / capacity, 1)
+                             for proc in current}
+            _procs["ticks"], _procs["time"] = {proc["pid"]: proc["ticks"] for proc in current}, now
+        cpu = _procs["cpu"]
+    total = memory()["total"]
+    gpu_use = gpu_processes()
+    apps: dict[str, dict] = {}
+    for proc in current:
+        proc.pop("ticks")
+        proc["cpu"] = cpu.get(proc["pid"], 0.0)
+        proc["memory"] = round(100 * proc["rss"] / total, 2)
+        proc.update(gpu_use.get(proc["pid"], {"gpu": 0.0, "gpu_memory": 0}))
+        app = apps.setdefault(proc["name"], {"name": proc["name"], "cpu": 0.0, "rss": 0, "memory": 0.0, "gpu": 0.0,
+                                             "gpu_memory": 0, "processes": []})
+        for key in ("cpu", "rss", "memory", "gpu", "gpu_memory"):
+            app[key] += proc[key]
+        app["processes"].append(proc)
+    for app in apps.values():
+        app["cpu"], app["memory"] = round(app["cpu"], 1), round(app["memory"], 2)
+        app["processes"].sort(key=lambda proc: (-proc["cpu"], -proc["rss"]))
+    # The busiest apps by each measure; the long tail of idle helpers isn't worth sending every 2 seconds.
+    keep = {}
+    for key in ("cpu", "rss", "gpu", "gpu_memory"):
+        for app in sorted(apps.values(), key=lambda app: -app[key])[:APPS]:
+            keep[app["name"]] = app
+    for app in keep.values():
+        app["count"] = len(app["processes"])
+        app["processes"] = app["processes"][:PROCESSES_PER_APP]
+    return {"cpus": _cpus(), "memory_total": total, "count": len(current), "apps_total": len(apps),
+            "apps": sorted(keep.values(), key=lambda app: (-app["cpu"], -app["rss"]))}

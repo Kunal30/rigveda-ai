@@ -6,6 +6,7 @@ window instead: say what to write, get a draft from your files, copy it and past
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -20,7 +21,9 @@ SLOT = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/rigveda
 DEFAULT_KEYS = "<Super><Alt>r"
 BROWSERS = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge"]
 SYSTEM_PYTHON = "/usr/bin/python3"  # the orb needs GTK and WebKitGTK, which only the system Python has
-AUTOSTART = Path.home() / ".config" / "autostart" / "rigveda-orb.desktop"
+OLD_AUTOSTART = Path.home() / ".config" / "autostart" / "rigveda-orb.desktop"  # used before the service
+ORB_UNIT = Path.home() / ".config" / "systemd" / "user" / "rigveda-orb.service"
+ORB_UNIT_TEMPLATE = Path(__file__).resolve().parents[2] / "contrib" / "systemd" / "rigveda-orb.service"
 
 
 def open_window(port: int) -> None:
@@ -77,25 +80,55 @@ def orb_command(port: int) -> list[str]:
     return [SYSTEM_PYTHON, str(Path(__file__).with_name("orb.py")), str(port)]
 
 
-def launch_orb(port: int) -> None:
-    """Start the floating orb in the background. It shows a dim red orb until the server answers."""
+def _orb_ready() -> None:
     check = subprocess.run([SYSTEM_PYTHON, "-c", "import gi; gi.require_version('WebKit2', '4.1')"], capture_output=True)
     if check.returncode:
         raise SystemExit("The orb needs GTK and WebKitGTK for the system Python: sudo apt install python3-gi gir1.2-webkit2-4.1")
+
+
+def _systemctl(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True)
+
+
+def launch_orb(port: int) -> None:
+    """Start the floating orb in the background, through its service when that's installed so there's only ever one.
+    It shows a dim red orb until the server answers."""
+    _orb_ready()
+    if ORB_UNIT.exists():
+        _systemctl("start", ORB_UNIT.name)
+        return
     subprocess.Popen(orb_command(port), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 
+def run_orb(port: int) -> None:
+    """Run the orb in this process (for the systemd service)."""
+    _orb_ready()
+    os.execv(SYSTEM_PYTHON, orb_command(port))
+
+
 def install_autostart(port: int) -> None:
-    """Start the orb at every login."""
-    AUTOSTART.parent.mkdir(parents=True, exist_ok=True)
-    command = " ".join(f'"{part}"' if " " in part else part for part in orb_command(port))
-    AUTOSTART.write_text("[Desktop Entry]\nType=Application\nName=Rigveda AI orb\n"
-                         "Comment=Floating assistant with your file stats and a chat\n"
-                         f"Exec={command}\nX-GNOME-Autostart-enabled=true\nNoDisplay=true\n")
+    """Keep the orb on screen from every login on, restarting it if it crashes."""
+    _orb_ready()
+    if not shutil.which("systemctl"):
+        raise SystemExit("systemd isn't available: add `rigveda orb` to your desktop's startup applications instead.")
+    subprocess.run(["pkill", "-f", f"^{SYSTEM_PYTHON} .*rigveda/orb.py"], capture_output=True)  # a copy started by hand
+    OLD_AUTOSTART.unlink(missing_ok=True)
+    ORB_UNIT.parent.mkdir(parents=True, exist_ok=True)
+    program = "%h/.local/bin/rigveda" if shutil.which("rigveda") else f"{sys.executable} -m rigveda"
+    exec_start = f"{program} orb --foreground" + (f" --port {port}" if port != 8765 else "")
+    ORB_UNIT.write_text(ORB_UNIT_TEMPLATE.read_text().replace("%h/.local/bin/rigveda orb --foreground", exec_start))
+    _systemctl("daemon-reload")
+    result = _systemctl("enable", "--now", ORB_UNIT.name)
+    if result.returncode:
+        raise SystemExit(f"Couldn't enable {ORB_UNIT.name}: {result.stderr.strip()}")
 
 
 def remove_autostart() -> bool:
-    if not AUTOSTART.exists():
-        return False
-    AUTOSTART.unlink()
-    return True
+    removed = OLD_AUTOSTART.exists()
+    OLD_AUTOSTART.unlink(missing_ok=True)
+    if ORB_UNIT.exists():
+        _systemctl("disable", "--now", ORB_UNIT.name)
+        ORB_UNIT.unlink()
+        _systemctl("daemon-reload")
+        removed = True
+    return removed

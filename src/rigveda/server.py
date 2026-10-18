@@ -260,7 +260,7 @@ ORB_HTML = """<!doctype html>
 *{box-sizing:border-box}html,body{margin:0;height:100%;background:transparent;color:var(--text);font:14px var(--sans);overflow:hidden;user-select:none}
 body.web{background:radial-gradient(circle at 30% 20%,#0d2a44,#020810 70%)}
 /* ── the orb ── */
-#orb{position:fixed;left:50%;top:50%;width:112px;height:112px;margin:-56px 0 0 -56px;cursor:pointer;transition:filter .25s ease;filter:drop-shadow(0 0 10px rgba(94,231,255,.4))}
+#orb{position:fixed;left:50%;top:50%;width:144px;height:144px;margin:-72px 0 0 -72px;cursor:pointer;transition:filter .25s ease;filter:drop-shadow(0 0 10px rgba(94,231,255,.4))}
 #orb:hover{filter:drop-shadow(0 0 18px rgba(94,231,255,.7))}
 body.panel #orb,body.web #orb{display:none}
 .art{overflow:visible}.art .spin{transform-origin:60px 60px;animation:spin 18s linear infinite}.art .rev{transform-origin:60px 60px;animation:spin 11s linear infinite reverse}
@@ -289,6 +289,19 @@ header{display:flex;align-items:center;gap:12px;padding:2px 4px 12px;border-bott
 .live{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.gauge{padding:8px 10px 7px;border:1px solid var(--cyan-faint);border-radius:12px;background:rgba(94,231,255,.03)}
 .gauge .top{display:flex;justify-content:space-between;align-items:baseline}.gauge .val{font:600 18px var(--mono);text-shadow:0 0 12px rgba(94,231,255,.5)}.gauge .val.warn{color:var(--warn)}.gauge .val.bad{color:var(--bad)}
 .gauge svg{display:block;width:100%;height:22px;margin:4px 0 2px}.gauge .sub{font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gauge{cursor:pointer;transition:border-color .2s,background .2s}.gauge:hover,.gauge:focus-visible{border-color:var(--cyan-dim);background:rgba(94,231,255,.07);outline:0}
+#drawer{position:absolute;inset:70px 10px 10px;display:none;flex-direction:column;border:1px solid var(--cyan-dim);border-radius:16px;padding:10px 10px 6px;
+  background:linear-gradient(160deg,#04101c,#020810);box-shadow:0 0 30px rgba(94,231,255,.15);animation:open .25s cubic-bezier(.2,.9,.3,1.2);z-index:2}
+#drawer.on{display:flex}.dhead{display:flex;align-items:center;gap:8px}.dhead button,.tabs button{font:600 11px var(--sans);letter-spacing:.12em;text-transform:uppercase;cursor:pointer;border-radius:9px;padding:6px 10px}
+.dhead #back{background:none;border:1px solid var(--cyan-dim);color:var(--cyan)}.tabs{display:flex;gap:4px;margin-left:auto}.tabs button{background:none;border:1px solid transparent;color:var(--muted)}.tabs button.on{color:var(--text);border-color:var(--cyan);background:var(--cyan-faint)}
+.dsum{font:11px var(--mono);color:var(--muted);margin:9px 2px 6px}.dcols{display:grid;grid-template-columns:1fr 70px;gap:8px;padding:0 8px 4px;border-bottom:1px solid var(--cyan-faint)}
+#dlist{flex:1;min-height:0;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--cyan-dim) transparent;user-select:text}
+.app{border-bottom:1px solid rgba(94,231,255,.07)}.app>.row{display:grid;grid-template-columns:1fr 70px;gap:8px;align-items:center;padding:7px 8px;cursor:pointer;border-radius:8px}.app>.row:hover{background:rgba(94,231,255,.06)}
+.app .nm{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.app .nm small{font:10px var(--mono);color:var(--muted);margin-left:6px;font-weight:400}.app .nm::before{content:"▸";color:var(--cyan);margin-right:6px;display:inline-block;transition:transform .15s}.app.open .nm::before{transform:rotate(90deg)}
+.app .more{grid-column:1/-1;font:10.5px var(--mono);color:var(--muted)}.app .bar{grid-column:1/-1;height:3px;border-radius:2px;background:var(--cyan-faint);overflow:hidden}.app .bar i{display:block;height:100%;background:var(--cyan);box-shadow:0 0 6px var(--cyan)}
+.app .v{font:600 14px var(--mono);text-align:right}.app .v.warn{color:var(--warn)}.app .v.bad{color:var(--bad)}
+.procs{display:none;margin:0 4px 8px 18px;border-left:1px solid var(--cyan-dim);padding-left:8px}.app.open .procs{display:block}
+.proc{padding:6px 0;border-bottom:1px dashed rgba(94,231,255,.1);font:10.5px var(--mono);color:var(--muted)}.proc:last-child{border:0}.proc b{color:var(--text);font-weight:600}.proc .cmd{color:#b9d7e0;word-break:break-all;margin-top:2px;white-space:pre-wrap}
 .readouts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}.readout{padding:9px 10px 8px;border-left:2px solid var(--cyan);background:linear-gradient(90deg,rgba(94,231,255,.08),transparent)}
 .readout .num{font:600 27px var(--mono);letter-spacing:-.02em;text-shadow:0 0 14px rgba(94,231,255,.55)}.readout .sub{font-size:10.5px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .activity{margin-top:12px}.activity .row{display:flex;justify-content:space-between;align-items:baseline}.activity .row span:last-child{font:11px var(--mono);color:var(--muted)}
@@ -330,6 +343,9 @@ footer{display:flex;justify-content:space-between;margin-top:9px;padding:0 22px;
 <button class="icon-btn" id="close" title="Back to the orb (Esc)">–</button></header>
 <div class="systems" id="systems"></div>
 <div class="live" id="live"></div>
+<div id="drawer" role="dialog" aria-label="What's using your computer"><div class="dhead"><button id="back">← Back</button>
+<div class="tabs" id="tabs"><button data-tab="cpu">CPU</button><button data-tab="ram">Memory</button><button data-tab="gpu">GPU</button></div></div>
+<div class="dsum" id="dsum">Reading processes…</div><div class="dcols"><span class="label">App · processes</span><span class="label" id="dcol" style="text-align:right">CPU</span></div><div id="dlist"></div></div>
 <div class="readouts" id="readouts"></div>
 <div class="activity"><div class="row"><span class="label">Index activity · 30 days</span><span id="act-total"></span></div><div class="bars" id="bars"></div></div>
 <div class="alerts" id="alerts"></div>
@@ -356,7 +372,7 @@ for(const [i,name] of METERS.entries()){const a0=i*90+6,a1=a0+78;for(const cls o
   if(cls==='fill'){m.dataset.meter=name;m.setAttribute('stroke-dasharray','0 100')}orb.querySelector('.meters').append(m)}}
 const mini=orb.cloneNode(true);mini.removeAttribute('id');mini.removeAttribute('role');mini.removeAttribute('tabindex');mini.setAttribute('aria-hidden','true');$('mini').append(mini);
 function expand(){if(document.body.className==='panel')return;post({cmd:'expand'});document.body.className='panel';load(true);setTimeout(()=>$('q').focus(),250)}
-function collapse(){if(!native)return;document.body.className='orb';post({cmd:'collapse'});animate()}
+function collapse(){if(!native)return;closeDetails();document.body.className='orb';post({cmd:'collapse'});animate()}
 let press=null;
 // Springs: the orb bobs, leans toward the pointer anywhere on screen (the window sends look(dx, dy), pixels from
 // the orb's centre), squashes when pressed and bounces back.
@@ -381,7 +397,7 @@ orb.addEventListener('mousedown',e=>{if(e.button===0)press={x:e.screenX,y:e.scre
 addEventListener('mousemove',e=>{if(press&&!press.moved&&Math.hypot(e.screenX-press.x,e.screenY-press.y)>4){press.moved=true;held=false;post({cmd:'drag'});press=null}});
 addEventListener('mouseup',()=>{if(press&&!press.moved)setTimeout(expand,140);press=null});
 orb.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' ')expand()});
-$('close').onclick=collapse;addEventListener('keydown',e=>{if(e.key==='Escape')collapse()});
+$('close').onclick=collapse;addEventListener('keydown',e=>{if(e.key==='Escape'){if($('drawer').classList.contains('on'))closeDetails();else collapse()}});
 $('quit').onclick=()=>post({cmd:'quit'});
 $('status-link').onclick=e=>{if(native){e.preventDefault();post({cmd:'open',url:location.origin+'/status'})}};
 function tick(){const d=new Date();$('clock').replaceChildren(d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}),
@@ -426,9 +442,36 @@ async function system(){let d;try{d=await (await fetch('/api/system')).json()}ca
   $('orb-title').textContent=`CPU ${rows[0][2]} · GPU ${rows[1][2]} · GPU memory ${rows[2][2]} free · RAM ${rows[3][2]}`;
   if(document.body.className==='orb')return;
   const live=$('live');live.replaceChildren();
-  for(const [k,label,value,sub] of rows){const box=el('div','gauge'),top=el('div','top');const lv=now[k]===null?'':level(now[k]);
+  for(const [k,label,value,sub] of rows){const box=el('div','gauge'),top=el('div','top');box.tabIndex=0;box.title='Show what is using it';
+    box.onclick=()=>details(k==='vram'?'gpu':k);box.onkeydown=e=>{if(e.key==='Enter')details(k==='vram'?'gpu':k)};const lv=now[k]===null?'':level(now[k]);
     top.append(el('span','label',label),el('span','val '+lv,value));box.append(top,spark(history[k],lv),el('div','sub',sub));live.append(box)}}
 system();setInterval(system,2000);
+// Details: every app's share of CPU, memory and GPU, refreshed every 2 s while open; click an app for its processes.
+let tab='cpu',procTimer=null;const opened=new Set();
+const MB=b=>b>=2**30?(b/2**30).toFixed(1)+' GB':(b/2**20).toFixed(0)+' MB',STATE={R:'running',S:'sleeping',D:'waiting on disk',Z:'zombie',T:'stopped',I:'idle',t:'traced'};
+const since=t=>{const s=Date.now()/1000-t;return s<3600?Math.round(s/60)+' min':s<172800?Math.round(s/3600)+' h':Math.round(s/86400)+' d'};
+const METRIC={cpu:{col:'CPU',key:'cpu',fmt:a=>a.cpu.toFixed(1)+'%',pct:a=>a.cpu},ram:{col:'Memory',key:'rss',fmt:a=>MB(a.rss),pct:a=>a.memory},
+  gpu:{col:'GPU',key:'gpu_memory',fmt:a=>a.gpu?a.gpu.toFixed(0)+'%':MB(a.gpu_memory),pct:a=>a.gpu}};
+function details(t){tab=t;$('drawer').classList.add('on');$('tabs').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab));
+  $('dcol').textContent=METRIC[tab].col;procs();clearInterval(procTimer);procTimer=setInterval(procs,2000)}
+function closeDetails(){$('drawer').classList.remove('on');clearInterval(procTimer);procTimer=null}
+$('back').onclick=closeDetails;if(location.hash.startsWith('#apps'))setTimeout(()=>details(location.hash.split(':')[1]||'cpu'),300);$('tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>details(b.dataset.tab));
+async function procs(){let d;try{d=await (await fetch('/api/processes')).json()}catch{$('dsum').textContent='Could not read processes.';return}
+  const m=METRIC[tab],apps=d.apps.filter(a=>tab!=='gpu'||a.gpu||a.gpu_memory).sort((a,b)=>tab==='gpu'?(b.gpu-a.gpu)||(b.gpu_memory-a.gpu_memory):b[m.key]-a[m.key]);
+  const cpuTotal=d.apps.reduce((s,a)=>s+a.cpu,0),vram=d.apps.reduce((s,a)=>s+a.gpu_memory,0);
+  $('dsum').textContent=tab==='cpu'?`${num(d.count)} processes · ${num(d.apps_total)} apps · ${d.cpus} CPUs · % of the whole machine`
+    :tab==='ram'?`${MB(d.apps.reduce((s,a)=>s+a.rss,0))} in these apps · ${MB(d.memory_total)} installed`:`${apps.length} apps on the GPU · ${MB(vram)} of GPU memory in use`;
+  const top=Math.max(...apps.map(a=>tab==='gpu'?a.gpu_memory:a[m.key]),1e-9),list=$('dlist'),scroll=list.scrollTop;list.replaceChildren();
+  if(!apps.length)list.append(el('div','dsum',tab==='gpu'?'Nothing is using the GPU right now.':'Nothing to show.'));
+  for(const a of apps){const box=el('div','app'+(opened.has(a.name)?' open':'')),row=el('div','row'),name=el('div','nm',a.name);name.append(el('small',null,'×'+a.count));
+    const p=m.pct(a),bar=el('div','bar'),fill=el('i');fill.style.width=Math.max(1,100*(tab==='gpu'?a.gpu_memory:a[m.key])/top)+'%';bar.append(fill);
+    row.append(name,el('div','v '+(tab==='ram'?'':level(p)),m.fmt(a)),bar,el('div','more',`CPU ${a.cpu.toFixed(1)}% · RAM ${MB(a.rss)} (${a.memory.toFixed(1)}%)`+(a.gpu||a.gpu_memory?` · GPU ${a.gpu.toFixed(0)}% · ${MB(a.gpu_memory)} VRAM`:'')));
+    row.onclick=()=>{box.classList.toggle('open');box.classList.contains('open')?opened.add(a.name):opened.delete(a.name)};
+    const ps=el('div','procs');for(const p of a.processes){const r=el('div','proc'),head=el('div');
+      head.append(el('b',null,'PID '+p.pid),` · ${p.user} · ${STATE[p.state]||p.state} · up ${since(p.started)} · ${p.threads} thread${p.threads>1?'s':''}`);
+      r.append(head,el('div',null,`CPU ${p.cpu.toFixed(1)}% · RAM ${MB(p.rss)} (${p.memory.toFixed(2)}%)`+(p.gpu||p.gpu_memory?` · GPU ${p.gpu.toFixed(0)}% · ${MB(p.gpu_memory)} VRAM`:'')),el('div','cmd',p.command));ps.append(r)}
+    if(a.count>a.processes.length)ps.append(el('div','proc',`…and ${a.count-a.processes.length} more`));box.append(row,ps);list.append(box)}
+  list.scrollTop=scroll}
 function type(node,text){return new Promise(done=>{let i=0;const t=setInterval(()=>{i=Math.min(text.length,i+4);node.textContent=text.slice(0,i);$('log').scrollTop=1e9;if(i>=text.length){clearInterval(t);done()}},14)})}
 $('ask').addEventListener('submit',async e=>{e.preventDefault();const question=$('q').value.trim();if(!question||busy)return;busy=true;$('send').disabled=true;$('q').value='';
   const log=$('log');log.append(el('div','msg you',question));const reply=el('div','msg ai wait','Searching your files…');log.append(reply);log.scrollTop=1e9;
@@ -568,6 +611,9 @@ def make_handler(config: ServerConfig):
                 return
             if urlsplit(self.path).path == "/orb":
                 self.page(ORB_HTML)
+                return
+            if self.path == "/api/processes":
+                self.respond(HTTPStatus.OK, status.processes())
                 return
             if self.path == "/api/system":
                 self.respond(HTTPStatus.OK, status.system())
