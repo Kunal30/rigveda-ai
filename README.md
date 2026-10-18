@@ -47,7 +47,8 @@ To keep the index current as files change, run `rigveda watch` instead of `rigve
 | `rigveda token [--new]` | Show (or replace) the secret the browser extension needs |
 | `rigveda write ["WHAT"]` | Draft text from your files; without text, open the writing window |
 | `rigveda hotkey [--remove]` | A desktop shortcut (Super+Alt+R on GNOME) that opens the writing window |
-| `rigveda serve` | Browser chat at [http://127.0.0.1:8765](http://127.0.0.1:8765), facts review at `/facts` |
+| `rigveda orb` | A floating assistant on your screen: live stats and a chat (`--autostart` to start it at login) |
+| `rigveda serve` | Browser chat at [http://127.0.0.1:8765](http://127.0.0.1:8765), facts review at `/facts`, live status at [`/status`](http://127.0.0.1:8765/status) |
 
 The index lives at `~/.local/share/rigveda/rigveda.db`, readable only by you. Use `--db PATH` before a command to use another file. Models and the Ollama address are set in the config file.
 
@@ -110,6 +111,12 @@ In a longer text box (an application question, a cover letter, an email) press *
 Drafts use only what your files say. When your name is set (`rigveda facts owner`), only passages that mention you are used, so a textbook or a paper in your folders is never written up as your own work, and film and audio transcripts are never used. Where a detail is missing, the draft leaves a placeholder such as `[your role]` for you to fill in. ID numbers are never included. Add a folder with your résumé, project notes or past letters to get drafts about your work. Always read a draft before sending it.
 
 Outside Chrome, `rigveda hotkey` adds a GNOME shortcut, **Super+Alt+R**, that opens a small writing window: say what you need, then copy the draft and paste it where you were. (GNOME on Wayland doesn't let one app type into another app's text boxes, so a window with Copy is the most it can do.) `rigveda write "a two-line bio"` prints a draft in the terminal.
+
+## Floating orb
+
+`rigveda orb` puts a small glowing orb in the bottom-right corner of your screen. It stays above other windows and on every workspace. Its three outer arcs turn from green to amber or red if the file watcher, the server or the local models stop. Drag it anywhere (it remembers where), and click it to open a translucent panel with your index stats, 30 days of activity, any problems, and a chat for asking about your files. **Esc** or **–** shrinks it back. `rigveda orb --autostart` also starts it at every login; `rigveda orb --no-autostart` stops that. The same panel opens in a browser at [http://127.0.0.1:8765/orb](http://127.0.0.1:8765/orb).
+
+It needs GTK and WebKitGTK for the system Python (`sudo apt install python3-gi gir1.2-webkit2-4.1`, already on Ubuntu desktops). GNOME on Wayland doesn't let an app stay on top or choose its position, so the orb runs through XWayland, where both work.
 
 ## Run in the background
 

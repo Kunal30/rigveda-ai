@@ -143,6 +143,10 @@ def main() -> None:
     cmd_hotkey = commands.add_parser("hotkey", help="A desktop keyboard shortcut (GNOME) that opens the writing window.")
     cmd_hotkey.add_argument("--keys", default="<Super><Alt>r", help="Shortcut in GNOME's notation (default: <Super><Alt>r)")
     cmd_hotkey.add_argument("--remove", action="store_true", help="Remove the shortcut")
+    cmd_orb = commands.add_parser("orb", help="A floating assistant that stays on screen: your stats and a chat.")
+    cmd_orb.add_argument("--port", type=int, default=8765, help="Port of `rigveda serve`")
+    cmd_orb.add_argument("--autostart", action="store_true", help="Also start it at every login")
+    cmd_orb.add_argument("--no-autostart", action="store_true", help="Stop starting it at login")
     cmd_serve = commands.add_parser("serve", help="Run the local browser chat interface.")
     cmd_serve.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
     cmd_serve.add_argument("--port", type=int, default=8765)
@@ -180,6 +184,17 @@ def main() -> None:
         keys = "+".join(part.title() for part in args.keys.replace("><", "+").strip("<>").replace(">", "+").split("+"))
         print(f"Press {keys} anywhere to open the writing window. "
               "Change or remove it in Settings → Keyboard → Custom Shortcuts, or with `rigveda hotkey --remove`.")
+        return
+    if args.command == "orb":
+        from . import desktop
+        if args.no_autostart:
+            print("The orb won't start at login any more." if desktop.remove_autostart() else "The orb wasn't set to start at login.")
+            return
+        desktop.launch_orb(args.port)
+        if args.autostart:
+            desktop.install_autostart(args.port)
+        print("The orb is in the bottom-right corner of your screen: drag it anywhere, click it to open, Esc to close."
+              + (" It will start at every login." if args.autostart else ""))
         return
     if args.command == "write":
         if not args.text:
