@@ -1,4 +1,4 @@
-"""The desktop writing window and a GNOME keyboard shortcut that opens it from any app.
+"""The desktop writing window, a GNOME keyboard shortcut that opens it from any app, and the floating orb.
 
 GNOME on Wayland doesn't let one app read or type into another app's text boxes, so the shortcut opens a small
 window instead: say what to write, get a draft from your files, copy it and paste it where you were.
@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import webbrowser
+from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -18,6 +19,8 @@ CUSTOM = SCHEMA + ".custom-keybinding"
 SLOT = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/rigveda/"
 DEFAULT_KEYS = "<Super><Alt>r"
 BROWSERS = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge"]
+SYSTEM_PYTHON = "/usr/bin/python3"  # the orb needs GTK and WebKitGTK, which only the system Python has
+AUTOSTART = Path.home() / ".config" / "autostart" / "rigveda-orb.desktop"
 
 
 def open_window(port: int) -> None:
@@ -67,4 +70,32 @@ def remove_hotkey() -> bool:
     _gsettings("set", SCHEMA, "custom-keybindings", str([slot for slot in slots if slot != SLOT]))
     for name in ("name", "command", "binding"):
         _gsettings("reset", f"{CUSTOM}:{SLOT}", name)
+    return True
+
+
+def orb_command(port: int) -> list[str]:
+    return [SYSTEM_PYTHON, str(Path(__file__).with_name("orb.py")), str(port)]
+
+
+def launch_orb(port: int) -> None:
+    """Start the floating orb in the background. It shows a dim red orb until the server answers."""
+    check = subprocess.run([SYSTEM_PYTHON, "-c", "import gi; gi.require_version('WebKit2', '4.1')"], capture_output=True)
+    if check.returncode:
+        raise SystemExit("The orb needs GTK and WebKitGTK for the system Python: sudo apt install python3-gi gir1.2-webkit2-4.1")
+    subprocess.Popen(orb_command(port), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def install_autostart(port: int) -> None:
+    """Start the orb at every login."""
+    AUTOSTART.parent.mkdir(parents=True, exist_ok=True)
+    command = " ".join(f'"{part}"' if " " in part else part for part in orb_command(port))
+    AUTOSTART.write_text("[Desktop Entry]\nType=Application\nName=Rigveda AI orb\n"
+                         "Comment=Floating assistant with your file stats and a chat\n"
+                         f"Exec={command}\nX-GNOME-Autostart-enabled=true\nNoDisplay=true\n")
+
+
+def remove_autostart() -> bool:
+    if not AUTOSTART.exists():
+        return False
+    AUTOSTART.unlink()
     return True
