@@ -17,7 +17,7 @@ const send = message => new Promise(resolve => chrome.runtime.sendMessage(messag
     $('status').className = 'bad';
     return;
   }
-  $('status').textContent = `Connected · ${status.approved} approved fact${status.approved === 1 ? '' : 's'}`;
+  $('status').textContent = `Connected · ${status.facts} fact${status.facts === 1 ? '' : 's'} from your files`;
   $('fill').disabled = !site || !$('site').checked;
   $('fill').addEventListener('click', async () => {
     $('fill').disabled = true;
@@ -25,7 +25,7 @@ const send = message => new Promise(resolve => chrome.runtime.sendMessage(messag
       const reply = await chrome.tabs.sendMessage(tab.id, {type: 'fillPage'}, {frameId: 0});
       $('result').textContent = reply.filled
         ? `Filled ${reply.filled} of ${reply.fields} empty fields, outlined in orange. Check them, then submit yourself.`
-        : 'No empty fields here match your approved facts.';
+        : 'No empty fields here match the facts in your files.';
     } catch {
       $('result').textContent = 'Reload the page and try again.';
     } finally {

@@ -1,7 +1,7 @@
 """Personal facts profile: details such as name, birth date and address pulled out of documents for review.
 
-Facts start as "pending". Only facts you approve are used to fill forms. Each fact keeps the files and the
-exact words it was read from, so you can check it before approving.
+Facts start as "pending" and are suggested in forms straight away; approving one only ranks it first, and
+rejecting one stops it being suggested. Each fact keeps the files and the exact words it was read from.
 """
 
 from __future__ import annotations
@@ -244,6 +244,11 @@ def listing(con: sqlite3.Connection, status: str | None = None) -> list[dict]:
     facts.sort(key=lambda fact: (order.get(fact["key"], len(order)), fact["status"] != "approved", -fact["files"],
                                  -fact["newest"], fact["value"]))
     return facts
+
+
+def usable(con: sqlite3.Connection) -> list[dict]:
+    """Facts that may be suggested: everything found or typed in except what you rejected, approved first."""
+    return [fact for fact in listing(con) if fact["status"] != "rejected"]
 
 
 def decide(con: sqlite3.Connection, fact_id: int, status: str, value: str | None = None) -> int:

@@ -38,18 +38,18 @@ def search_query(request: dict) -> str:
 
 
 def profile(con) -> list[str]:
-    approved = facts.listing(con, "approved")
+    usable = facts.usable(con)
     lines = []
     for key in PROFILE_KEYS:
-        values = [fact["value"] for fact in approved if fact["key"] == key][:2]
+        values = [fact["value"] for fact in usable if fact["key"] == key][:2]
         if values:
             lines.append(f"{facts.KEYS[key]}: {' / '.join(values)}")
     return lines
 
 
 def secrets(con) -> list[str]:
-    """Approved ID numbers, so they can be kept out of anything written for a web page."""
-    return [fact["value"] for fact in facts.listing(con, "approved") if fact["key"] in facts.SENSITIVE]
+    """Every ID number on file, so none of them ends up in anything written for a web page."""
+    return [fact["value"] for fact in facts.listing(con) if fact["key"] in facts.SENSITIVE]
 
 
 def build_prompt(request: dict, sources: list, about_you: list[str], config: Config) -> str:
@@ -73,7 +73,7 @@ def build_prompt(request: dict, sources: list, about_you: list[str], config: Con
         "- In \"text\", give only the words to insert: no preamble, quotation marks or notes. In \"used\", list the "
         "numbers of the passages you actually drew on (none: an empty list).",
         "",
-        "Facts about the writer:", *(about_you or ["(none approved yet)"]), "",
+        "Facts about the writer:", *(about_you or ["(none found yet)"]), "",
         "Passages from the writer's files:", context, "",
     ]
     if page:

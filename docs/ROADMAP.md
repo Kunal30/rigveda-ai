@@ -66,8 +66,8 @@ A file watcher (`watchdog`) re-indexes changed files in the background.
 - At index time, a model scans likely documents (IDs, resumes, bills, letters) and
   extracts facts as `(key, value, source file, page, exact words)`; confidence is how many files agree. Examples:
   `full_name`, `date_of_birth`, `address.current`, `passport.number`, `employer`.
-- Facts stay **pending** until you approve or edit them in a review page. Only
-  approved facts are suggested in forms.
+- Facts are suggested in forms as soon as they are found, without asking. A review
+  page is optional: approve a fact to rank it first, or reject it to stop it being suggested.
 - Conflicts, such as two addresses, are kept with dates, so the newest can be
   preferred and older ones are still shown.
 

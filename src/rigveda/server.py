@@ -57,7 +57,7 @@ h2{font-size:.85rem;text-transform:uppercase;letter-spacing:.08em;color:var(--mu
 form{display:flex;gap:8px;flex-wrap:wrap;margin-top:28px;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}form select,form input{font:inherit;color:inherit;background:#0b1226;border:1px solid var(--line);border-radius:8px;padding:8px}form input{flex:1;min-width:200px}form button{background:var(--accent);color:#07102d;border:0;border-radius:9px;font-weight:700;padding:8px 14px;cursor:pointer}
 .empty{color:var(--muted);margin-top:30px}
 </style></head><body><main><header><h1>Your facts profile</h1>
-<p>Details found in your files. Only <b>approved</b> facts are used to fill forms. Check each against the words it came from. <a href="/">← Ask your files</a></p></header>
+<p>Details found in your files. All of them are suggested in forms; <b>approve</b> one to rank it first, <b>reject</b> one to stop suggesting it. <a href="/">← Ask your files</a></p></header>
 <nav id="tabs"></nav><section id="list"></section>
 <form id="add"><select id="key" aria-label="Fact"></select><input id="value" placeholder="Add a fact yourself, e.g. your passport number" aria-label="Value"><button>Add</button></form>
 </main><script>
@@ -109,7 +109,7 @@ legend{font-weight:700;padding:0 6px}label{display:flex;flex-direction:column;ga
 input,select,textarea,.editor{font:inherit;padding:8px 10px;border:1px solid #c9c2b6;border-radius:8px;background:#fff}textarea,.editor{min-height:110px;grid-column:1/-1}.editor{line-height:1.45}fieldset label.wide{grid-column:1/-1}button{font:inherit;padding:10px 18px;border-radius:10px;border:0;background:#2a2160;color:#fff;font-weight:700}
 #result{margin-top:14px;color:#a33}
 </style></head><body><main>
-<h1>Test form</h1><p>Click into a field: Rigveda suggests a value from your approved facts. <b>Tab</b> accepts, <b>Esc</b> dismisses. Or use <i>Fill this page</i> in the extension's menu. Nothing here is sent anywhere, and the extension never submits forms.</p>
+<h1>Test form</h1><p>Click into a field: Rigveda suggests a value from the facts in your files. <b>Tab</b> accepts, <b>Esc</b> dismisses. Or use <i>Fill this page</i> in the extension's menu. Nothing here is sent anywhere, and the extension never submits forms.</p>
 <form id="form" autocomplete="off">
 <fieldset><legend>About you</legend>
 <label>First name<input name="fname"></label><label>Last name<input name="lname"></label>
@@ -282,10 +282,10 @@ def make_handler(config: ServerConfig):
                 if self.authorized():
                     con = connect(config.database)
                     try:
-                        approved = len(facts.listing(con, "approved"))
+                        usable = len(facts.usable(con))
                     finally:
                         con.close()
-                    self.respond(HTTPStatus.OK, {"ok": True, "approved": approved})
+                    self.respond(HTTPStatus.OK, {"ok": True, "facts": usable})
                 return
             if self.path == "/write":
                 self.page(WRITE_HTML)

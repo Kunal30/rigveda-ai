@@ -12,7 +12,7 @@ $('save').addEventListener('click', async () => {
   await chrome.storage.local.set({token: $('token').value.trim(), port});
   const reply = await chrome.runtime.sendMessage({type: 'status'});
   $('result').className = reply?.error ? 'bad' : 'ok';
-  $('result').textContent = reply?.error || `Connected. ${reply.approved} approved facts can be suggested.`;
+  $('result').textContent = reply?.error || `Connected. ${reply.facts} facts can be suggested.`;
 });
 
 load();
