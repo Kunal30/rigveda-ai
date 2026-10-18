@@ -58,8 +58,10 @@ def profile(config):
     for key, value in [("given_name", "Kunal"), ("date_of_birth", "1996-03-30"), ("address.state", "WA"),
                        ("nationality", "INDIAN"), ("gender", "M"), ("phone", "(480) 410-5749")]:
         facts.add_manual(con, key, value)
-    with con:  # a pending fact must never be suggested
+    with con:  # found in files but never reviewed: still suggested, after approved ones; rejected ones never
         con.execute("INSERT INTO facts(key, value, norm, status, created_at) VALUES ('email', 'x@y.z', 'x@y.z', 'pending', 0)")
+        con.execute("INSERT INTO facts(key, value, norm, status, created_at) VALUES ('given_name', 'Kay', 'kay', 'pending', 0)")
+        con.execute("INSERT INTO facts(key, value, norm, status, created_at) VALUES ('email', 'no@y.z', 'no@y.z', 'rejected', 0)")
     return con
 
 
@@ -87,9 +89,9 @@ def test_dropdowns_get_the_matching_option(profile) -> None:
     assert values(profile, {"label": "State", "type": "select", "options": STATES[:2]}) == []  # no matching option
 
 
-def test_only_approved_facts_are_suggested(profile) -> None:
-    assert values(profile, {"type": "email"}) == []
-    assert values(profile, {"label": "First name"})[0][0] == "Kunal"
+def test_unreviewed_facts_are_suggested_without_approval(profile) -> None:
+    assert values(profile, {"type": "email"}) == [("x@y.z", None)]  # the rejected one is left out
+    assert [value for value, _ in values(profile, {"label": "First name"})] == ["Kunal", "Kay"]  # approved first
 
 
 @pytest.fixture
@@ -163,7 +165,5 @@ def test_address_parts_come_from_the_same_home(tmp_path, config, monkeypatch) ->
     config.owner_name = "Kunal"
     index_paths(config.database_path, [str(docs)], config, log=lambda message: None)
     con = connect(config.database_path)
-    for fact in facts.listing(con):
-        facts.decide(con, fact["id"], "approved")
     assert values(con, {"label": "Street address"})[0][0] == "9 New Rd"
     assert values(con, {"label": "City"})[0][0] == "Sammamish"  # although Seattle is in more files

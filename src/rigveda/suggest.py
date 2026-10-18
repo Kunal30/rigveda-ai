@@ -1,4 +1,4 @@
-"""Form-field suggestions: work out what a field asks for, then offer approved facts in the shape it expects."""
+"""Form-field suggestions: work out what a field asks for, then offer facts from your files in the shape it expects."""
 
 from __future__ import annotations
 
@@ -186,18 +186,18 @@ def pick_option(key: str, value: str, options: list[dict], part: str = "") -> di
 
 
 def suggestions(con: sqlite3.Connection, field: dict, limit: int = 3) -> list[dict]:
-    """Up to `limit` approved values for a field, best first, each with where it came from."""
+    """Up to `limit` values for a field from facts you have not rejected, best first, each with where it came from."""
     key = classify(field)
     if not key:
         return []
     text = describe(field)
     part = date_part(field, text) if key in facts.DATE_KEYS else ""
-    approved = facts.listing(con, "approved")
-    candidates = [fact for fact in approved if fact["key"] == key]
+    usable = facts.usable(con)
+    candidates = [fact for fact in usable if fact["key"] == key]
     if key.startswith("address"):
         # Your current address first, and every part of it from the same place: the newest street decides,
         # then city, ZIP and the rest come from files that mention that street.
-        streets = sorted((fact for fact in approved if fact["key"] == "address.street"), key=lambda fact: -fact["newest"])
+        streets = sorted((fact for fact in usable if fact["key"] == "address.street"), key=lambda fact: -fact["newest"])
         home = {source["path"] for source in streets[0]["sources"]} if streets else set()
         candidates.sort(key=lambda fact: (not home & {source["path"] for source in fact["sources"]}, -fact["newest"]))
     results, seen = [], set()

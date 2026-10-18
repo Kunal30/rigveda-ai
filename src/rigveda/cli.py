@@ -75,8 +75,8 @@ def facts_command(args, db: Path, config: configuration.Config) -> None:
                 print("Tip: set your name with `rigveda facts owner \"Your Full Name\"` so only your own details are collected.")
             scanned = facts.scan(con, config, lambda message: print(message, file=sys.stderr), rescan=args.rescan)
             pending = len(facts.listing(con, "pending"))
-            print(f"Scanned {scanned} document(s). {pending} fact(s) waiting for review: `rigveda facts list` or "
-                  "the review page at http://127.0.0.1:8765/facts (run `rigveda serve`).")
+            print(f"Scanned {scanned} document(s). {pending} new fact(s), already suggested in forms. Check or reject them with "
+                  "`rigveda facts list` or the review page at http://127.0.0.1:8765/facts (run `rigveda serve`).")
         elif args.action == "list":
             status = None if args.status == "all" else args.status
             rows = facts.listing(con, status)

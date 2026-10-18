@@ -1,5 +1,5 @@
-// Shows suggestions from your approved Rigveda facts under form fields. Tab or Enter accepts, the arrow keys
-// choose, Esc dismisses. Never fills passwords or payment cards (the server refuses those too) and never submits.
+// Shows suggestions under form fields from the facts Rigveda found in your files. Tab or Enter accepts, the arrow
+// keys choose, Esc dismisses. Never fills passwords or payment cards (the server refuses those too) and never submits.
 // Writing help: Alt+Shift+R (or right-click → Write with Rigveda) in a text box shows a draft from your files,
 // or the next sentences of what you're writing. Tab inserts it at the cursor.
 (() => {

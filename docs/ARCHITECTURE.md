@@ -66,12 +66,13 @@ Form filling needs facts, not passages. A second pass reads each new document fo
 stateDiagram-v2
     direction LR
     [*] --> Pending: found, with its source
-    Pending --> Approved: you confirm
-    Pending --> Rejected: you decline
-    Approved --> [*]: used in forms
+    Pending --> Approved: optional, ranks it first
+    Pending --> Rejected: never suggested
+    Pending --> [*]: used in forms
+    Approved --> [*]: used in forms first
 ```
 
-Nothing is used until you approve it on the review page at `/facts`. A rejected fact stays rejected when it turns up again. A fact that appears in several files is stored once, with every source attached.
+Facts are suggested in forms as soon as they are found; you don't have to confirm anything. The review page at `/facts` is optional: approving a fact puts it first, and rejecting one stops it being suggested. A rejected fact stays rejected when it turns up again. A fact that appears in several files is stored once, with every source attached.
 
 ## Filling forms
 
