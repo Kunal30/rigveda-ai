@@ -26,6 +26,7 @@ from gi.repository import Gdk, GLib, Gtk, WebKit2  # noqa: E402
 ORB = (168, 168)  # the orb plus room for its glow and bounce
 PANEL = (440, 780)
 MARGIN = 24
+STALL = 6  # seconds without a drawn frame before the window counts as frozen
 STATE = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "rigveda" / "orb.json"
 OFFLINE = """<!doctype html><html><body style="margin:0;background:transparent;display:grid;place-items:center;height:100vh">
 <div title="Rigveda AI isn't running" style="width:64px;height:64px;border-radius:50%;border:2px solid rgba(255,92,122,.7);
@@ -70,7 +71,10 @@ class Orb(Gtk.Window):
         self.connect("configure-event", self.remember)
         self.connect("destroy", Gtk.main_quit)
         self.pointer = None
+        self.target = (*self.home, *ORB)  # where the window should be and how big, to put it back after a reset
+        self.frame, self.stalled, self.stuck = -1, 0, False
         GLib.timeout_add(40, self.track)
+        GLib.timeout_add_seconds(1, self.watch)
         self.view.load_uri(url)
 
     def track(self) -> bool:
@@ -84,6 +88,39 @@ class Orb(Gtk.Window):
                 self.pointer = pointer
                 self.view.evaluate_javascript(f"window.look && look({pointer[0]}, {pointer[1]})", -1, None, None, None, None, None)
         return True
+
+    def watch(self) -> bool:
+        """Notice when the window stops drawing and reset it. GNOME sometimes loses track of a frame from an XWayland
+        window (it logs "Frame has assigned frame counter but no frame drawn time"), and GTK then waits forever for that
+        frame before drawing the next, so the orb freezes while everything behind it keeps working. Hiding and showing
+        the window starts it afresh; if that doesn't help, quit with an error so the service starts a new one."""
+        clock = self.get_frame_clock()
+        if not clock or not self.get_mapped():
+            return True
+        frame = clock.get_frame_counter()
+        if frame != self.frame:
+            self.frame, self.stalled = frame, 0
+        else:
+            self.stalled += 1
+            if self.stalled == STALL:
+                print("The orb stopped drawing; resetting its window.", file=sys.stderr, flush=True)
+                self.reset()
+            elif self.stalled == 2 * STALL:
+                print("The orb is still frozen; quitting so the service restarts it.", file=sys.stderr, flush=True)
+                self.stuck = True
+                Gtk.main_quit()
+                return False
+        self.queue_draw()  # ask for a frame each second, so a still page doesn't look frozen
+        return True
+
+    def reset(self) -> None:
+        self.hide()
+        x, y, width, height = self.target
+        self.size((width, height))
+        self.move(x, y)
+        self.show_all()
+        self.set_keep_above(True)
+        self.stick()
 
     def size(self, size: tuple[int, int]) -> None:
         self.set_size_request(*size)
@@ -106,6 +143,7 @@ class Orb(Gtk.Window):
     def remember(self, widget, event) -> bool:
         if not self.expanded:
             self.home = (event.x, event.y)
+            self.target = (*self.home, *ORB)
             try:
                 STATE.parent.mkdir(parents=True, exist_ok=True)
                 STATE.write_text(json.dumps({"position": self.home}))
@@ -145,6 +183,7 @@ class Orb(Gtk.Window):
             y = y + ORB[1] - PANEL[1]
         x = min(max(x, area.x + 8), area.x + area.width - PANEL[0] - 8)
         y = min(max(y, area.y + 8), area.y + area.height - PANEL[1] - 8)
+        self.target = (x, y, *PANEL)
         self.size(PANEL)
         self.move(x, y)
         self.present()
@@ -152,6 +191,7 @@ class Orb(Gtk.Window):
     def collapse(self) -> None:
         if not self.expanded:
             return
+        self.target = (*self.home, *ORB)
         self.size(ORB)
         self.move(*self.home)
         GLib.timeout_add(200, self.settled)
@@ -169,8 +209,11 @@ class Orb(Gtk.Window):
 
 def main() -> None:
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-    Orb(f"http://127.0.0.1:{port}/orb?native=1").show_all()
+    orb = Orb(f"http://127.0.0.1:{port}/orb?native=1")
+    orb.show_all()
     Gtk.main()
+    if orb.stuck:
+        sys.exit(1)  # a failure, so the service's Restart=on-failure brings it back
 
 
 if __name__ == "__main__":
