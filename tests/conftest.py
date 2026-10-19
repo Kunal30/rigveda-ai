@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from rigveda import llm
+from rigveda import conversation, llm
 from rigveda.config import Config
 
 
@@ -12,6 +12,7 @@ from rigveda.config import Config
 def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Never read or write the real ~/.config/rigveda during tests."""
     monkeypatch.setenv("RIGVEDA_CONFIG", str(tmp_path / "config" / "config.toml"))
+    monkeypatch.setattr(conversation, "PATH", tmp_path / "conversation.json")
 
 
 def fake_embed(host: str, model: str, texts: list[str]) -> list[list[float]]:

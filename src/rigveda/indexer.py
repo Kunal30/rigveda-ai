@@ -73,18 +73,25 @@ def index_file(con: sqlite3.Connection, path: Path, config: Config, log: Log = _
     except Exception as error:  # corrupt or unreadable file; keep going with the rest
         log(f"Skipping {path}: {type(error).__name__}: {error}")
         return "skipped"
+    save(con, str(path), kind, extract.version(path), stat.st_mtime_ns, stat.st_size, segments)
+    return "updated"
+
+
+def save(con: sqlite3.Connection, path: str, kind: str, version: str, modified_ns: int, size: int,
+         segments: list[extract.Segment]) -> int:
+    """Replace a document's text in the index. Returns how many chunks it has now."""
+    ordinal = 0
     with con:
-        remove_document(con, str(path))
+        remove_document(con, path)
         con.execute("INSERT INTO documents(path, modified_ns, size, indexed_at, kind, version) VALUES (?, ?, ?, ?, ?, ?)",
-                    (str(path), stat.st_mtime_ns, stat.st_size, int(time.time()), kind, extract.version(path)))
-        ordinal = 0
+                    (path, modified_ns, size, int(time.time()), kind, version))
         for segment in segments:
             for chunk in chunks(segment.text):
                 cursor = con.execute("INSERT INTO chunks(path, ordinal, location, text) VALUES (?, ?, ?, ?)",
-                                     (str(path), ordinal, segment.location, chunk))
+                                     (path, ordinal, segment.location, chunk))
                 con.execute("INSERT INTO chunks_fts(rowid, text) VALUES (?, ?)", (cursor.lastrowid, chunk))
                 ordinal += 1
-    return "updated"
+    return ordinal
 
 
 def remove_path(con: sqlite3.Connection, path: Path) -> int:

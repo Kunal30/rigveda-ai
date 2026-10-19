@@ -1,0 +1,13 @@
+[Unit]
+Description=Rigveda AI: floating orb with your stats and a chat
+PartOf=graphical-session.target
+After=graphical-session.target rigveda-serve.service
+
+[Service]
+ExecStart=%h/.local/bin/rigveda orb --foreground
+# Quit in the panel exits cleanly and leaves it closed until the next login; a crash brings it back.
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

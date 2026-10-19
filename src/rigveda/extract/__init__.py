@@ -23,10 +23,10 @@ Extractor = Callable[[Path, Config], list[Segment]]
 
 
 def _registry() -> dict[str, tuple[str, Extractor, str]]:
-    from . import documents, images, media, text
+    from . import archives, documents, images, mail, media, office, text
 
     table: dict[str, tuple[str, Extractor, str]] = {}
-    for module in (text, documents, images, media):
+    for module in (text, documents, office, images, media, mail, archives):
         for suffix, kind, extractor in module.EXTRACTORS:
             table[suffix] = (kind, extractor, getattr(module, "VERSIONS", {}).get(kind, "1"))
     return table
@@ -51,3 +51,14 @@ def version(path: Path) -> str:
 def extract(path: Path, config: Config) -> list[Segment]:
     segments = REGISTRY[path.suffix.lower()][1](path, config)
     return [segment for segment in segments if segment.text.strip()]
+
+
+def extract_any(path: Path, config: Config, fallback: bool = True) -> tuple[str, list[Segment]]:
+    """(kind, segments) for any file: its reader when the type is known, otherwise whatever text is in it."""
+    if supported(path):
+        return kind(path), extract(path, config)
+    if not fallback:
+        return "binary", []
+    from .binary import read_any
+
+    return "binary", read_any(path, config)
