@@ -68,9 +68,11 @@ def search(db: Path, question: str, limit: int, config: Config | None = None) ->
 
 def cite(row) -> str:
     """Human-readable source, e.g. `talk.mp4 @ 12:30` or `deck.pptx (slide 4)`."""
-    location = row["location"]
+    location, path = row["location"], row["path"]
+    if path.startswith("gdrive://"):  # gdrive://<id>/<name>
+        path = "Google Drive: " + path.split("/", 3)[-1]
     if not location:
-        return f"{row['path']} (chunk {row['ordinal'] + 1})"
+        return f"{path} (chunk {row['ordinal'] + 1})"
     if location[0].isdigit():
-        return f"{row['path']} @ {location}"
-    return f"{row['path']} ({location})"
+        return f"{path} @ {location}"
+    return f"{path} ({location})"

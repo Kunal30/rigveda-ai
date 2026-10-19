@@ -19,6 +19,7 @@ import urllib.request
 from pathlib import Path
 
 UNITS = {"rigveda.service": "File watcher", "rigveda-serve.service": "Local server"}
+DRIVE_UNIT = "rigveda-drive-index.service"
 DAYS = 30  # how far back the activity charts go
 SKIP = re.compile(r"^Skipping (?P<path>/.+?): (?P<reason>.+)$")
 NOISE = re.compile(r"^(Stopping|Stopped) |: Consumed ")  # systemd bookkeeping around every restart
@@ -106,7 +107,59 @@ def collect(con: sqlite3.Connection, ollama_host: str, now: float | None = None)
         "facts_per_day": per_day(con, "SELECT date(created_at, 'unixepoch', 'localtime') AS day, COUNT(*) FROM facts "
                                       "WHERE created_at >= ? GROUP BY day", now),
         "log": entries[-15:],
+        "drive": drive(con),
     }
+
+
+def drive(con: sqlite3.Connection) -> dict | None:
+    """Google Drive indexing progress, and whether a run is going now; None before Drive was connected."""
+    from . import drive_index
+
+    report = drive_index.progress(con)
+    if not report["files"]:
+        return None
+    running = _run("systemctl", "--user", "is-active", DRIVE_UNIT).strip() == "active"
+    return {**report, "running": running}
+
+
+LOG_UNITS = {**UNITS, DRIVE_UNIT: "Google Drive"}
+PACE_WINDOW = 300  # seconds of finished files the reading speed is measured over
+
+
+def activity_log(lines: int = 80) -> list[dict]:
+    """Recent messages from every Rigveda service, oldest first, each with the service it came from."""
+    out = _run("journalctl", "--user", *(arg for unit in LOG_UNITS for arg in ("-u", unit)), "-n", str(lines * 2),
+               "-o", "json", "--output-fields=MESSAGE,_SYSTEMD_USER_UNIT,USER_UNIT", "--no-pager")
+    entries = []
+    for line in out.splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        message = entry.get("MESSAGE")
+        if not isinstance(message, str) or NOISE.search(message):  # non-text messages arrive as lists of bytes
+            continue
+        unit = entry.get("USER_UNIT") or entry.get("_SYSTEMD_USER_UNIT") or ""  # USER_UNIT: systemd starting or stopping one
+        entries.append({"time": int(entry.get("__REALTIME_TIMESTAMP", 0)) // 1_000_000, "source": LOG_UNITS.get(unit, unit),
+                        "message": re.sub(r"(\.service) - .*", r"\1", message).removesuffix(" Press Ctrl+C to stop.")})
+    return entries[-lines:]
+
+
+def activity(con: sqlite3.Connection, now: float | None = None) -> dict:
+    """What Rigveda is doing right now: Drive progress with its pace, the files it just read, and the log."""
+    now = time.time() if now is None else now
+    report = drive(con)
+    if report:
+        recent = con.execute("SELECT COUNT(*) FROM drive_files WHERE done_at >= ? AND note != '0 bytes'",
+                             (int(now) - PACE_WINDOW,)).fetchone()[0]
+        left = sum(stage["files"] - stage["done"] for stage in report["stages"])
+        rate = recent / PACE_WINDOW
+        report["rate"] = round(rate, 2)
+        report["eta"] = int(left / rate) if rate and report["running"] else None
+        report["recent"] = [dict(row) for row in con.execute(
+            "SELECT name, mime, size, state, note, done_at FROM drive_files WHERE done_at IS NOT NULL "
+            "AND note != '0 bytes' ORDER BY done_at DESC, rowid DESC LIMIT 12")]
+    return {"checked_at": int(now), "drive": report, "log": activity_log()}
 
 
 _cpu = {"sample": None, "time": 0.0, "percent": 0.0}

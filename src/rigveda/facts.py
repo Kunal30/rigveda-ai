@@ -18,7 +18,7 @@ from .config import Config
 
 VERSION = "3"  # bump to re-scan every document after changing the prompt or the checks
 MAX_CHUNKS_PER_DOCUMENT = 20  # a long book that mentions "address" often is not worth hundreds of model calls
-SKIP_KINDS = {"audio", "video"}  # transcripts of recordings rarely state personal details
+SKIP_KINDS = {"audio", "video", "subtitles", "binary"}  # recordings and films rarely state your details; build files never do
 
 # The keys a form can ask for, with the label shown on the review page.
 KEYS = {

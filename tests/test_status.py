@@ -103,3 +103,25 @@ def test_processes_are_grouped_by_app_with_cpu_memory_and_gpu(monkeypatch) -> No
     assert status._app_name(["/usr/bin/python3", "/x/orb.py", "8765"], "python3") == "orb.py"
     assert status._app_name([], "kworker/0:1") == "Kernel threads"
     assert status._app_name(["/opt/google/chrome/chrome --type=gpu-process --render-node-override=/dev/dri/renderD128"], "chrome") == "chrome"
+
+
+def test_activity_reports_drive_pace_recent_files_and_every_service_log(con, monkeypatch) -> None:
+    con, _, _ = con
+    now = 1_800_000_000
+    with con:
+        con.executemany("INSERT INTO drive_files(id, name, mime, size, modified, link, state, note, done_at) VALUES (?, ?, ?, ?, '', '', ?, ?, ?)",
+                        [("a", "Visa.pdf", "application/pdf", 10, "indexed", "", now - 10),
+                         ("b", "broken.zip", "application/zip", 20, "failed", "BadZipFile", now - 5),
+                         ("c", "empty.txt", "text/plain", 0, "empty", "0 bytes", now - 1),
+                         ("d", "later.pdf", "application/pdf", 30, "pending", "", None)])
+    lines = [{"__REALTIME_TIMESTAMP": str(now * 10**6), "_SYSTEMD_USER_UNIT": "rigveda-drive-index.service", "MESSAGE": "Drive: reading documents and emails"},
+             {"__REALTIME_TIMESTAMP": str(now * 10**6), "_SYSTEMD_USER_UNIT": "init.scope", "USER_UNIT": "rigveda.service",
+              "MESSAGE": "Stopped rigveda.service - Rigveda AI"},
+             {"__REALTIME_TIMESTAMP": str(now * 10**6), "_SYSTEMD_USER_UNIT": "rigveda.service", "MESSAGE": [1, 2]}]
+    monkeypatch.setattr(status, "_run", lambda *command: "active" if "is-active" in command
+                        else "\n".join(json.dumps(line) for line in lines))
+    report = status.activity(con, now=now)
+    drive = report["drive"]
+    assert drive["running"] and drive["rate"] == round(2 / status.PACE_WINDOW, 2) and drive["eta"] is not None
+    assert [file["name"] for file in drive["recent"]] == ["broken.zip", "Visa.pdf"]  # newest first, 0-byte files left out
+    assert report["log"] == [{"time": now, "source": "Google Drive", "message": "Drive: reading documents and emails"}]

@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS embeddings (chunk_id INTEGER PRIMARY KEY REFERENCES c
 -- Personal facts (see facts.py). Sources and scans go when their document is re-indexed or deleted.
 CREATE TABLE IF NOT EXISTS facts (id INTEGER PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL, norm TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, decided_at INTEGER, UNIQUE(key, norm));
 CREATE TABLE IF NOT EXISTS fact_sources (fact_id INTEGER NOT NULL REFERENCES facts(id) ON DELETE CASCADE, path TEXT NOT NULL REFERENCES documents(path) ON DELETE CASCADE, location TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL, PRIMARY KEY (fact_id, path, location, evidence));
+-- Google Drive files and how far indexing got with each (see drive_index.py). Indexed ones are documents at
+-- gdrive://<id>/<name>.
+CREATE TABLE IF NOT EXISTS drive_files (id TEXT PRIMARY KEY, name TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL DEFAULT 0, modified TEXT NOT NULL, link TEXT NOT NULL DEFAULT '', state TEXT NOT NULL DEFAULT 'pending', note TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0, done_at INTEGER);
+CREATE INDEX IF NOT EXISTS drive_files_state ON drive_files(state);
 CREATE TABLE IF NOT EXISTS fact_scans (path TEXT PRIMARY KEY REFERENCES documents(path) ON DELETE CASCADE, version TEXT NOT NULL, model TEXT NOT NULL, scanned_at INTEGER NOT NULL);
 """
 
@@ -31,6 +35,10 @@ def connect(path: Path) -> sqlite3.Connection:
     os.chmod(path, 0o600)  # the index holds extracted text from private files
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
+    # The watcher, the server and a Drive run use the database at once: readers never block the writer, and a
+    # writer waits its turn instead of failing.
+    con.execute("PRAGMA busy_timeout = 30000")
+    con.execute("PRAGMA journal_mode = WAL")
     con.executescript(SCHEMA)
     for table, columns in MIGRATIONS.items():
         existing = {row["name"] for row in con.execute(f"PRAGMA table_info({table})")}
