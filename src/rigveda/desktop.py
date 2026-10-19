@@ -53,26 +53,31 @@ def _slots() -> list[str]:
     return list(ast.literal_eval(value))
 
 
-def install_hotkey(command: str, keys: str = DEFAULT_KEYS) -> None:
+LISTEN_SLOT = SLOT.replace("/rigveda/", "/rigveda-listen/")
+LISTEN_KEYS = "<Super>r"
+PRESS = "systemctl --user kill --signal=SIGUSR1 --kill-whom=main rigveda-listen.service"  # fast: no Python to start
+
+
+def install_hotkey(command: str, keys: str = DEFAULT_KEYS, slot: str = SLOT, name: str = "Write with Rigveda") -> None:
     """Add (or update) a GNOME custom shortcut that runs `command`."""
     if not shutil.which("gsettings"):
         raise SystemExit("gsettings not found: set a keyboard shortcut for `rigveda write` in your desktop's settings.")
     slots = _slots()
-    if SLOT not in slots:
-        _gsettings("set", SCHEMA, "custom-keybindings", str(slots + [SLOT]))
-    for name, value in (("name", "Write with Rigveda"), ("command", command), ("binding", keys)):
-        _gsettings("set", f"{CUSTOM}:{SLOT}", name, value)
+    if slot not in slots:
+        _gsettings("set", SCHEMA, "custom-keybindings", str(slots + [slot]))
+    for key, value in (("name", name), ("command", command), ("binding", keys)):
+        _gsettings("set", f"{CUSTOM}:{slot}", key, value)
 
 
-def remove_hotkey() -> bool:
+def remove_hotkey(slot: str = SLOT) -> bool:
     if not shutil.which("gsettings"):
         return False
     slots = _slots()
-    if SLOT not in slots:
+    if slot not in slots:
         return False
-    _gsettings("set", SCHEMA, "custom-keybindings", str([slot for slot in slots if slot != SLOT]))
-    for name in ("name", "command", "binding"):
-        _gsettings("reset", f"{CUSTOM}:{SLOT}", name)
+    _gsettings("set", SCHEMA, "custom-keybindings", str([other for other in slots if other != slot]))
+    for key in ("name", "command", "binding"):
+        _gsettings("reset", f"{CUSTOM}:{slot}", key)
     return True
 
 
@@ -132,3 +137,35 @@ def remove_autostart() -> bool:
         _systemctl("daemon-reload")
         removed = True
     return removed
+
+
+LISTEN_UNIT = ORB_UNIT.with_name("rigveda-listen.service")
+LISTEN_UNIT_TEMPLATE = ORB_UNIT_TEMPLATE.with_name("rigveda-listen.service")
+
+
+def install_listen_service() -> None:
+    """Listen for "Rigved" from every login on, restarting if it crashes."""
+    if not shutil.which("systemctl"):
+        raise SystemExit("systemd isn't available: run `rigveda listen` from your desktop's startup applications instead.")
+    program = "%h/.local/bin/rigveda" if shutil.which("rigveda") else f"{sys.executable} -m rigveda"
+    LISTEN_UNIT.parent.mkdir(parents=True, exist_ok=True)
+    LISTEN_UNIT.write_text(LISTEN_UNIT_TEMPLATE.read_text().replace("%h/.local/bin/rigveda", program))
+    _systemctl("daemon-reload")
+    result = _systemctl("enable", "--now", LISTEN_UNIT.name)
+    if result.returncode:
+        raise SystemExit(f"Couldn't enable {LISTEN_UNIT.name}: {result.stderr.strip()}")
+
+
+def install_listen_key(keys: str = LISTEN_KEYS) -> None:
+    """The shortcut that makes Rigveda listen."""
+    install_hotkey(PRESS, keys, LISTEN_SLOT, "Talk to Rigveda")
+
+
+def remove_listen_service() -> bool:
+    remove_hotkey(LISTEN_SLOT)
+    if not LISTEN_UNIT.exists():
+        return False
+    _systemctl("disable", "--now", LISTEN_UNIT.name)
+    LISTEN_UNIT.unlink()
+    _systemctl("daemon-reload")
+    return True

@@ -47,6 +47,8 @@ To keep the index current as files change, run `rigveda watch` instead of `rigve
 | `rigveda token [--new]` | Show (or replace) the secret the browser extension needs |
 | `rigveda write ["WHAT"]` | Draft text from your files; without text, open the writing window |
 | `rigveda hotkey [--remove]` | A desktop shortcut (Super+Alt+R on GNOME) that opens the writing window |
+| `rigveda drive setup FILE.json / connect / survey / index / status / retry / disconnect` | Connect Google Drive read-only, see what's in it, and index it in place ([guide](docs/GOOGLE_DRIVE.md)) |
+| `rigveda listen` | Voice commands: hold Right Ctrl (or tap Super+R) and say e.g. "open Downloads"; it answers aloud (`--autostart` sets it up for every login) |
 | `rigveda orb` | A floating assistant on your screen: live stats and a chat (`--autostart` keeps it there after every login) |
 | `rigveda serve` | Browser chat at [http://127.0.0.1:8765](http://127.0.0.1:8765), facts review at `/facts`, live status at [`/status`](http://127.0.0.1:8765/status) |
 
@@ -112,9 +114,28 @@ Drafts use only what your files say. When your name is set (`rigveda facts owner
 
 Outside Chrome, `rigveda hotkey` adds a GNOME shortcut, **Super+Alt+R**, that opens a small writing window: say what you need, then copy the draft and paste it where you were. (GNOME on Wayland doesn't let one app type into another app's text boxes, so a window with Copy is the most it can do.) `rigveda write "a two-line bio"` prints a draft in the terminal.
 
+## Google Drive
+
+Rigveda reads Google Drive in place and read-only, without copying it to this computer. Follow [docs/GOOGLE_DRIVE.md](docs/GOOGLE_DRIVE.md) to create your own free Google key (about ten minutes), then `rigveda drive connect` to sign in and `rigveda drive survey` to see your Drive grouped by type and size, with what indexing would read and skip. The survey fetches names, types and sizes only. `rigveda drive index --background` then reads Drive in place, keeping only the text and a link to each file; documents and emails first, then archives and other files, then recordings, then images.
+
+## Voice
+
+Hold **Right Ctrl** while you speak and let go when you're done, or tap **Super+R** and just talk (it stops when you pause). Say what you want: "open Downloads", "open Chrome and open Fidelity", "open my 2025 tax document", "find my passport", "search for the weather in San Jose", "what time is it", "turn it up", "pause the music", "when does my passport expire?", or just talk. A soft blip and the orb popping mean it's listening; the orb swells and glows with your voice, spins while it thinks and pulses while it answers. Use either key again to cut a reply short and ask something else. It answers aloud with dry, confident humour ("Google Chrome, up and running."), or as a calm Indian sage with `--persona sage` ("Tathaastu. Google Chrome awakens."). Everything you said and heard is in the orb's **Voice** tab.
+
+The microphone is closed until you use a key, and closes again when you let go (or, after Super+R, when you stop talking). Holding Right Ctrl on its own for a quarter of a second counts as talking; with another key, as in Ctrl+C, it's an ordinary shortcut. GNOME never tells apps a key was let go, so hold-to-talk reads the keyboard directly, which needs you in the `input` group: `sudo usermod -aG input $USER`, then log out and back in. That access could read everything you type, so Rigveda only looks for its one key and drops every other key event unseen; nothing is stored or logged. A different key: `talk_key` in the config (`KEY_RIGHTALT`, `KEY_PAUSE`, `KEY_SCROLLLOCK`, `KEY_F13`…). Prefer it always listening? `rigveda listen --mode wake` makes it answer to "Rigved" or "Hey Rigved" instead. Everything runs on this computer: Silero spots speech and Whisper writes it down. Simple rules understand common phrasings; for anything else the local model picks from a fixed list of actions (open, find, search, ask your files, talk, time, date, volume, music), so it can never run a command of its own, and it only opens a film or song whose name you said. Your conversations are kept in `~/.local/share/rigveda/voice-history.jsonl` (readable only by you, the last 1,000). The voice is [Kokoro](https://github.com/thewh1teagle/kokoro-onnx), with American, British and Indian voices to choose from; its model (about 340 MB) downloads on first use.
+
+```bash
+pip install -e '.[voice]'
+rigveda listen                       # listen in this terminal; Ctrl+C stops
+rigveda listen --text "open chrome"  # one command, typed instead of spoken (add --dry-run to only see what it would do)
+rigveda listen --voices              # hear every voice; choose with --voice am_fenrir, and --persona witty or sage
+rigveda listen --autostart           # from every login: the listener (a systemd user service) and the Super+R shortcut
+rigveda listen --no-autostart        # remove both
+```
+
 ## Floating orb
 
-`rigveda orb` puts a small glowing orb in the bottom-right corner of your screen. It stays above other windows and on every workspace. Its three outer arcs turn from green to amber or red if the file watcher, the server or the local models stop. Drag it anywhere (it remembers where), and click it to open a translucent panel with your index stats, 30 days of activity, any problems, and a chat for asking about your files. **Esc** or **–** shrinks it back. `rigveda orb --autostart` keeps it on screen from every login on: it installs and enables the `rigveda-orb.service` systemd user service, which restarts the orb if it crashes. *Quit* in the panel closes it until your next login. `rigveda orb --no-autostart` removes the service. The same panel opens in a browser at [http://127.0.0.1:8765/orb](http://127.0.0.1:8765/orb).
+`rigveda orb` puts a small glowing orb in the bottom-right corner of your screen. It stays above other windows and on every workspace. Its three outer arcs turn from green to amber or red if the file watcher, the server or the local models stop. Drag it anywhere (it remembers where), scroll over it to make it bigger or smaller, and click it to open a translucent panel with your index stats, 30 days of activity, any problems, and a chat for asking about your files. Drag the panel's edges or corners to resize it. **Esc** or **–** shrinks it back. Both sizes are remembered. `rigveda orb --autostart` keeps it on screen from every login on: it installs and enables the `rigveda-orb.service` systemd user service, which restarts the orb if it crashes. *Quit* in the panel closes it until your next login. `rigveda orb --no-autostart` removes the service. The same panel opens in a browser at [http://127.0.0.1:8765/orb](http://127.0.0.1:8765/orb).
 
 It needs GTK and WebKitGTK for the system Python (`sudo apt install python3-gi gir1.2-webkit2-4.1`, already on Ubuntu desktops). GNOME on Wayland doesn't let an app stay on top or choose its position, so the orb runs through XWayland, where both work.
 

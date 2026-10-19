@@ -60,9 +60,10 @@ FACTS_FORMAT = {
 }
 
 
-def quick(host: str, model: str, prompt: str, timeout: float = 300, **options) -> str:
-    """A reply without the model's thinking step, for speed; models that cannot think are asked plainly."""
-    messages = [{"role": "user", "content": prompt}]
+def quick(host: str, model: str, prompt: str, timeout: float = 300, history: list[dict] | None = None, **options) -> str:
+    """A reply without the model's thinking step, for speed; models that cannot think are asked plainly. `history`:
+    messages that come before the prompt, such as the conversation so far."""
+    messages = [*(history or []), {"role": "user", "content": prompt}]
     try:
         return chat(host, model, messages, timeout=timeout, think=False, **options)
     except OllamaError as error:
@@ -99,11 +100,12 @@ def write_text(host: str, model: str, prompt: str) -> dict:
         return {"text": reply, "used": []}
 
 
-def ask(question: str, sources: Iterable, model: str, host: str) -> str:
+def ask(question: str, sources: Iterable, model: str, host: str, history: list[dict] | None = None) -> str:
+    """An answer from your files. `history`: the conversation so far, as messages, for what the question refers to."""
     from .search import cite
 
     context = "\n\n".join(f"SOURCE: {cite(row)}\n{row['text']}" for row in sources)
     prompt = ("Answer only from this local-file context; say when it is insufficient and cite paths. "
               "If several different values could answer the question, list each one with what it applies to "
               "instead of picking one.\n\n" + context + "\n\nQUESTION: " + question)
-    return chat(host, model, [{"role": "user", "content": prompt}])
+    return chat(host, model, [*(history or []), {"role": "user", "content": prompt}])

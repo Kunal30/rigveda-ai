@@ -33,6 +33,10 @@ class Config:
     whisper_model: str = "large-v3"
     owner_name: str = ""  # whose personal facts to collect; see `rigveda facts owner`
     scan_facts: bool = True  # look for personal facts after indexing
+    voice: str = "am_michael"  # who speaks when you talk to Rigveda (hear them all: `rigveda listen --voices`)
+    persona: str = "witty"  # how Rigved talks: "witty" (dry, confident humour) or "sage" (a calm Indian sage)
+    listen: str = "key"  # "key": while the talk key is held, or after Super+R; "wake": always listening for "Rigved"
+    talk_key: str = "KEY_RIGHTCTRL"  # held while you speak; see keyboard.KEYS
 
     @property
     def database_path(self) -> Path:

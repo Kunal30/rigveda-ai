@@ -57,6 +57,91 @@ def status_command(db: Path, config: configuration.Config) -> None:
     print(f"Files: {sum(row['files'] for row in rows)} ({kinds}); chunks: {chunks}")
 
 
+def drive_command(args, db: Path, config: configuration.Config) -> None:
+    from . import drive_index, gdrive
+    try:
+        if args.action == "setup":
+            if not args.file:
+                raise SystemExit("Give the key you downloaded: rigveda drive setup ~/Downloads/client_secret_….json")
+            print(f"Moved your Google key to {gdrive.setup(Path(args.file))} (readable only by you), so it isn't left "
+                  "in Downloads to be indexed. Next: rigveda drive connect")
+        elif args.action == "connect":
+            print("Opening Google sign-in in your browser…")
+            about = gdrive.connect()
+            print(f"Connected to {about['email']} (read-only). Next: rigveda drive survey")
+        elif args.action == "survey":
+            about = gdrive.account()
+            print(f"Looking through {about['email']}'s Drive (names, types and sizes only; nothing is downloaded)…", file=sys.stderr)
+            report = gdrive.survey(gdrive.files(lambda seen: print(f"\r  {seen:,} items listed", end="", file=sys.stderr)))
+            print(file=sys.stderr)
+            used = f"{gdrive.size(about['used'])} used" + (f" of {gdrive.size(about['limit'])}" if about["limit"] else "")
+            print(f"\n{report['files']:,} files in {report['folders']:,} folders · {used}\n")
+            print(f"{'':42}{'files':>9}{'size':>11}{'shared':>9}   indexing")
+            for name, group in report["groups"].items():
+                if group["files"]:
+                    print(f"{name:42}{group['files']:>9,}{gdrive.size(group['bytes']):>11}{group['shared']:>9,}   {group['handling']}")
+            print(f"\nRigveda could read {report['readable_files']:,} files ({gdrive.size(report['readable_bytes'])} "
+                  "plus Google Docs, which Google doesn't count). Sizes are what's stored; shared files don't use your quota.")
+        elif args.action == "index":
+            if args.background:
+                import shutil
+                import subprocess
+                program = shutil.which("rigveda") or sys.argv[0]
+                command = [program, "drive", "index"] + (["--only", args.only] if args.only else [])
+                result = subprocess.run(["systemd-run", "--user", "--unit=rigveda-drive-index", "--collect",
+                                         "--nice=10", "--description=Rigveda AI: index Google Drive", *command],
+                                        capture_output=True, text=True)
+                if result.returncode:
+                    raise SystemExit(f"Couldn't start it in the background: {result.stderr.strip()}")
+                print("Indexing Google Drive in the background. Progress: rigveda drive status · "
+                      "log: journalctl --user -u rigveda-drive-index -f · stop: systemctl --user stop rigveda-drive-index "
+                      "(it carries on from where it stopped next time)")
+                return
+            con = connect(db)
+            try:
+                log = lambda message: print(message, file=sys.stderr, flush=True)  # noqa: E731
+                listed = drive_index.refresh(con, log)
+                log(f"Drive has {listed['files']:,} files: {listed['added']:,} new, {listed['changed']:,} changed, "
+                    f"{listed['removed']:,} removed since last time.")
+                stages = {"documents": {0}, "other": {1}, "media": {2}, "images": {3}}
+                only = set().union(*(stages[name] for name in args.only.split(","))) if args.only else None
+                counts = drive_index.run(con, config, log, only)
+                log("Drive: done · " + (", ".join(f"{count:,} {name}" for name, count in sorted(counts.items())) or "nothing new"))
+                if config.scan_facts:
+                    from . import facts
+                    facts.scan(con, config, log)
+            finally:
+                con.close()
+        elif args.action == "retry":
+            con = connect(db)
+            with con:
+                count = con.execute("UPDATE drive_files SET state='pending', note='' WHERE state='failed'").rowcount
+            con.close()
+            print(f"{count:,} failed file(s) will be tried again on the next `rigveda drive index`.")
+        elif args.action == "status":
+            state = gdrive.status()
+            print(f"Connected to {state['email']} (read-only)." if state else
+                  "Not connected." + ("" if gdrive.client_path().exists() else " Start with docs/GOOGLE_DRIVE.md."))
+            con = connect(db)
+            report = drive_index.progress(con)
+            if report["files"]:
+                print(f"\n{report['files']:,} Drive files known · " + ", ".join(
+                    f"{count:,} {name}" for name, count in sorted(report["states"].items())))
+                for entry in report["stages"]:
+                    if entry["files"]:
+                        print(f"  {entry['name']:28} {entry['done']:>8,} / {entry['files']:,} done")
+                failed = con.execute("SELECT note, COUNT(*) AS n FROM drive_files WHERE state IN ('failed', 'waiting') "
+                                     "GROUP BY note ORDER BY n DESC LIMIT 5").fetchall()
+                for row in failed:
+                    print(f"  {row['n']:>6,} × {row['note'][:100]}")
+            con.close()
+        else:  # disconnect
+            print("Disconnected: Rigveda's access is revoked at Google and the sign-in is deleted."
+                  if gdrive.disconnect() else "Rigveda wasn't connected to Google Drive.")
+    except gdrive.DriveError as error:
+        raise SystemExit(str(error))
+
+
 def facts_command(args, db: Path, config: configuration.Config) -> None:
     from . import facts
 
@@ -143,6 +228,26 @@ def main() -> None:
     cmd_hotkey = commands.add_parser("hotkey", help="A desktop keyboard shortcut (GNOME) that opens the writing window.")
     cmd_hotkey.add_argument("--keys", default="<Super><Alt>r", help="Shortcut in GNOME's notation (default: <Super><Alt>r)")
     cmd_hotkey.add_argument("--remove", action="store_true", help="Remove the shortcut")
+    cmd_drive = commands.add_parser("drive", help="Google Drive, read-only: setup, connect, survey, index, status, retry, disconnect.",
+        description="setup FILE.json: store your Google key; connect: sign in; survey: see what's in your Drive by type and size "
+                    "(nothing is downloaded); index: read Drive into the index without keeping copies; status: connection and "
+                    "progress; retry: try failed files again; disconnect: revoke access. See docs/GOOGLE_DRIVE.md.")
+    cmd_drive.add_argument("action", choices=["setup", "connect", "survey", "index", "status", "retry", "disconnect"])
+    cmd_drive.add_argument("file", nargs="?", help="for setup: the client_secret_….json you downloaded")
+    cmd_drive.add_argument("--only", help="for index: documents, other, media, images (comma-separated)")
+    cmd_drive.add_argument("--background", action="store_true", help="for index: keep running after you close the terminal")
+    cmd_listen = commands.add_parser("listen", help='Voice commands: say "Rigved", then e.g. "open Downloads"; a sage answers.')
+    cmd_listen.add_argument("--text", help='Do one command as if spoken, e.g. "open chrome and open fidelity"')
+    cmd_listen.add_argument("--dry-run", action="store_true", help="With --text: say what would happen, without doing it")
+    cmd_listen.add_argument("--voices", action="store_true", help="Hear each voice, to choose one with --voice")
+    cmd_listen.add_argument("--voice", help="Who speaks, e.g. am_michael or hm_omega (remembered)")
+    cmd_listen.add_argument("--persona", choices=["witty", "sage"], help="How Rigved talks (remembered)")
+    cmd_listen.add_argument("--mode", choices=["key", "wake"],
+                            help='key: listen only after Super+R; wake: always listen for "Rigved" (remembered)')
+    cmd_listen.add_argument("--keys", default="<Super>r", help="The shortcut in GNOME's notation (default: <Super>r)")
+    cmd_listen.add_argument("--press", action="store_true", help="Make the running listener listen now (what the shortcut does)")
+    cmd_listen.add_argument("--autostart", action="store_true", help="Always listen, from every login on (a systemd user service)")
+    cmd_listen.add_argument("--no-autostart", action="store_true", help="Stop listening at login")
     cmd_orb = commands.add_parser("orb", help="A floating assistant that stays on screen: your stats and a chat.")
     cmd_orb.add_argument("--port", type=int, default=8765, help="Port of `rigveda serve`")
     cmd_orb.add_argument("--autostart", action="store_true", help="Keep it on screen from every login on (a systemd user service)")
@@ -185,6 +290,53 @@ def main() -> None:
         keys = "+".join(part.title() for part in args.keys.replace("><", "+").strip("<>").replace(">", "+").split("+"))
         print(f"Press {keys} anywhere to open the writing window. "
               "Change or remove it in Settings → Keyboard → Custom Shortcuts, or with `rigveda hotkey --remove`.")
+        return
+    if args.command == "drive":
+        drive_command(args, db, config)
+        return
+    if args.command == "listen":
+        from . import actions, desktop, voice
+        if args.voice:
+            if args.voice not in voice.VOICES:
+                raise SystemExit(f"Choose one of: {', '.join(voice.VOICES)}")
+            config.voice = args.voice
+        if args.persona:
+            config.persona = args.persona
+        if args.mode:
+            config.listen = args.mode
+        if args.voice or args.persona or args.mode:
+            configuration.save(config)
+        if args.press:
+            voice.press()
+            return
+        if args.no_autostart:
+            print("Rigveda won't listen at login any more." if desktop.remove_listen_service() else "It wasn't set to listen at login.")
+            return
+        if args.autostart:
+            desktop.install_listen_service()
+            if config.listen == "wake":
+                desktop.remove_hotkey(desktop.LISTEN_SLOT)
+                print('Rigveda is listening, and will after every login. Say "Rigved", then what you want. '
+                      "Stop with `rigveda listen --no-autostart`.")
+            else:
+                desktop.install_listen_key(args.keys)
+                print(f"Press {args.keys.replace('<', '').replace('>', '+').title()} and say what you want; the microphone "
+                      "is closed the rest of the time. Stop with `rigveda listen --no-autostart`.")
+            return
+        if args.voices:
+            for name in voice.VOICES:
+                print(name)
+                voice.Mouth(name).say(f"Hi, I'm Rigved. This voice is called {name.split('_')[1]}.")
+            return
+        if args.text:
+            steps = actions.understand(args.text, config)
+            print("Steps:", ", ".join(f"{step.kind} {step.target!r}" for step in steps) or "none")
+            reply = actions.carry_out(steps, config, dry_run=args.dry_run)
+            print("Rigved:", reply)
+            if not args.dry_run:
+                voice.Mouth(config.voice, actions.persona(config)["speed"]).say(reply)
+            return
+        voice.Listener(config, voice.log).run()
         return
     if args.command == "orb":
         from . import desktop

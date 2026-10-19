@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import facts, status, suggest, write
+from . import conversation, facts, status, suggest, write
 from .config import Config
 from .llm import OllamaError, ask
 from .search import cite, search
@@ -242,6 +242,8 @@ function render(){if(!data)return;
   stat(nb,'Facts suggested in forms',f.pending+f.approved,`${num(f.approved)} approved · ${num(f.pending)} unreviewed · ${num(f.rejected)} rejected`);
   stat(nb,'Files scanned for facts',d.scanned,`${num(d.chunks)} passages searchable`);
   stat(nb,'Files skipped',data.skipped.length,data.skipped.length?'Listed below':'Every file could be read');
+  if(data.drive){const g=data.drive,done=g.stages.reduce((a,s)=>a+s.done,0);stat(nb,'Google Drive files read',done,
+    `of ${num(g.files)} · ${g.running?'indexing now':'not running'} · `+g.stages.filter(s=>s.files).map(s=>`${s.name} ${Math.floor(100*s.done/s.files)}%`).join(' · '))}
   chart($('indexed'),data.indexed_per_day,'files');chart($('found'),data.facts_per_day,'facts');
   const sk=$('skipped');sk.replaceChildren();if(!data.skipped.length)sk.append(el('div','empty','None. Every file in your folders could be read.'));
   for(const s of data.skipped){const row=el('div',null,s.path);row.append(el('div','why',s.reason));sk.append(row)}
@@ -260,9 +262,17 @@ ORB_HTML = """<!doctype html>
 *{box-sizing:border-box}html,body{margin:0;height:100%;background:transparent;color:var(--text);font:14px var(--sans);overflow:hidden;user-select:none}
 body.web{background:radial-gradient(circle at 30% 20%,#0d2a44,#020810 70%)}
 /* ── the orb ── */
-#orb{position:fixed;left:50%;top:50%;width:144px;height:144px;margin:-72px 0 0 -72px;cursor:pointer;transition:filter .25s ease;filter:drop-shadow(0 0 10px rgba(94,231,255,.4))}
+#orb{position:fixed;left:50%;top:50%;width:86vmin;height:86vmin;margin:-43vmin 0 0 -43vmin;cursor:pointer;transition:filter .25s ease;filter:drop-shadow(0 0 10px rgba(94,231,255,.4))}
 #orb:hover{filter:drop-shadow(0 0 18px rgba(94,231,255,.7))}
+/* voice: set on <html> by voice(), so opening and closing the panel doesn't clear it */
+html.v-thinking .art .spin{animation-duration:1.2s}html.v-thinking .art .rev{animation-duration:4s}
+html.v-listening header .art{animation:hear 1s ease-in-out infinite alternate}html.v-speaking header .art{filter:drop-shadow(0 0 14px rgba(94,231,255,.9))}
+@keyframes hear{from{filter:drop-shadow(0 0 6px rgba(94,231,255,.5))}to{filter:drop-shadow(0 0 18px rgba(94,231,255,1)) brightness(1.25)}}
 body.panel #orb,body.web #orb{display:none}
+/* edges and corners that resize the panel window */
+.grip{position:fixed;z-index:9;display:none}body.panel .grip{display:block}
+.grip.n,.grip.s{left:18px;right:18px;height:8px;cursor:ns-resize}.grip.n{top:0}.grip.s{bottom:0}.grip.e,.grip.w{top:18px;bottom:18px;width:8px;cursor:ew-resize}.grip.e{right:0}.grip.w{left:0}
+.grip.nw,.grip.ne,.grip.se,.grip.sw{width:18px;height:18px}.grip.nw{left:0;top:0;cursor:nwse-resize}.grip.se{right:0;bottom:0;cursor:nwse-resize}.grip.ne{right:0;top:0;cursor:nesw-resize}.grip.sw{left:0;bottom:0;cursor:nesw-resize}
 .art{overflow:visible}.art .spin{transform-origin:60px 60px;animation:spin 18s linear infinite}.art .rev{transform-origin:60px 60px;animation:spin 11s linear infinite reverse}
 .art .spin{animation-duration:24s}.art .rev{animation-duration:60s}.thinking .art .spin{animation-duration:1.2s}.thinking .art .rev{animation-duration:4s}
 .meter{fill:none;stroke-width:3;stroke-linecap:round}.meter.track{stroke:rgba(94,231,255,.3)}.meter.fill{stroke:var(--cyan);transition:stroke-dasharray .8s ease,stroke .4s}.meter.fill.warn{stroke:var(--warn)}.meter.fill.bad{stroke:var(--bad)}
@@ -290,10 +300,24 @@ header{display:flex;align-items:center;gap:12px;padding:2px 4px 12px;border-bott
 .gauge .top{display:flex;justify-content:space-between;align-items:baseline}.gauge .val{font:600 18px var(--mono);text-shadow:0 0 12px rgba(94,231,255,.5)}.gauge .val.warn{color:var(--warn)}.gauge .val.bad{color:var(--bad)}
 .gauge svg{display:block;width:100%;height:22px;margin:4px 0 2px}.gauge .sub{font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .gauge{cursor:pointer;transition:border-color .2s,background .2s}.gauge:hover,.gauge:focus-visible{border-color:var(--cyan-dim);background:rgba(94,231,255,.07);outline:0}
-#drawer{position:absolute;inset:70px 10px 10px;display:none;flex-direction:column;border:1px solid var(--cyan-dim);border-radius:16px;padding:10px 10px 6px;
+#drawer,#activity{position:absolute;inset:70px 10px 10px;display:none;flex-direction:column;border:1px solid var(--cyan-dim);border-radius:16px;padding:10px 10px 6px;
   background:linear-gradient(160deg,#04101c,#020810);box-shadow:0 0 30px rgba(94,231,255,.15);animation:open .25s cubic-bezier(.2,.9,.3,1.2);z-index:2}
-#drawer.on{display:flex}.dhead{display:flex;align-items:center;gap:8px}.dhead button,.tabs button{font:600 11px var(--sans);letter-spacing:.12em;text-transform:uppercase;cursor:pointer;border-radius:9px;padding:6px 10px}
-.dhead #back{background:none;border:1px solid var(--cyan-dim);color:var(--cyan)}.tabs{display:flex;gap:4px;margin-left:auto}.tabs button{background:none;border:1px solid transparent;color:var(--muted)}.tabs button.on{color:var(--text);border-color:var(--cyan);background:var(--cyan-faint)}
+#voicelog{position:absolute;inset:70px 10px 10px;display:none;flex-direction:column;border:1px solid var(--cyan-dim);border-radius:16px;padding:10px 10px 6px;
+  background:linear-gradient(160deg,#04101c,#020810);box-shadow:0 0 30px rgba(94,231,255,.15);animation:open .25s cubic-bezier(.2,.9,.3,1.2);z-index:2}
+#voicelog.on{display:flex}#vlist{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:6px 2px;scrollbar-width:thin;scrollbar-color:var(--cyan-dim) transparent;user-select:text}
+#vask{margin-top:6px}  /* otherwise styled like the main chat box */
+#vlist time{align-self:center;font:10px var(--mono);color:var(--muted);margin-top:4px}#vlist .did{align-self:flex-start;font:10px var(--mono);color:var(--muted);margin:-4px 0 0 4px}
+#drawer.on,#activity.on{display:flex}.dhead{display:flex;align-items:center;gap:8px}.dhead button,.tabs button{font:600 11px var(--sans);letter-spacing:.12em;text-transform:uppercase;cursor:pointer;border-radius:9px;padding:6px 10px}
+.dhead .back{background:none;border:1px solid var(--cyan-dim);color:var(--cyan)}.tabs{display:flex;gap:4px;margin-left:auto}.tabs button{background:none;border:1px solid transparent;color:var(--muted)}.tabs button.on{color:var(--text);border-color:var(--cyan);background:var(--cyan-faint)}
+.dhead h3{margin:0 0 0 4px;font:600 11px var(--sans);letter-spacing:.18em;text-transform:uppercase;color:var(--cyan)}
+#activity .scroll{flex:1;min-height:0;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--cyan-dim) transparent;user-select:text}
+.stage{padding:6px 2px}.stage .row{display:flex;justify-content:space-between;font-size:12px}.stage .row span:last-child{font:11px var(--mono);color:var(--muted)}
+.stage .bar{height:4px;margin-top:4px;border-radius:2px;background:var(--cyan-faint);overflow:hidden}.stage .bar i{display:block;height:100%;background:var(--cyan);box-shadow:0 0 6px var(--cyan);transition:width .6s}
+.stage.now .row span:first-child::after{content:" ◂ now";color:var(--cyan);font:10px var(--mono)}
+.feed{margin:2px 0 8px}.feed div{display:grid;grid-template-columns:14px 1fr auto;gap:6px;padding:3px 2px;font:10.5px var(--mono);color:var(--muted);border-bottom:1px dashed rgba(94,231,255,.08)}
+.feed b{color:var(--text);font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.feed .indexed{color:var(--ok)}.feed .failed{color:var(--bad)}.feed .waiting,.feed .skipped,.feed .empty{color:var(--warn)}
+.logs div{padding:3px 2px;font:10.5px/1.4 var(--mono);color:#b9d7e0;word-break:break-word}.logs time{color:var(--muted);margin-right:6px}.logs span{color:var(--cyan);margin-right:6px}
+.alert.link{cursor:pointer}.alert.link:hover b,.alert.link:hover span:last-child{color:var(--text)}
 .dsum{font:11px var(--mono);color:var(--muted);margin:9px 2px 6px}.dcols{display:grid;grid-template-columns:1fr 70px;gap:8px;padding:0 8px 4px;border-bottom:1px solid var(--cyan-faint)}
 #dlist{flex:1;min-height:0;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--cyan-dim) transparent;user-select:text}
 .app{border-bottom:1px solid rgba(94,231,255,.07)}.app>.row{display:grid;grid-template-columns:1fr 70px;gap:8px;align-items:center;padding:7px 8px;cursor:pointer;border-radius:8px}.app>.row:hover{background:rgba(94,231,255,.06)}
@@ -343,15 +367,24 @@ footer{display:flex;justify-content:space-between;margin-top:9px;padding:0 22px;
 <button class="icon-btn" id="close" title="Back to the orb (Esc)">–</button></header>
 <div class="systems" id="systems"></div>
 <div class="live" id="live"></div>
-<div id="drawer" role="dialog" aria-label="What's using your computer"><div class="dhead"><button id="back">← Back</button>
+<div id="drawer" role="dialog" aria-label="What's using your computer"><div class="dhead"><button id="back" class="back">← Back</button>
 <div class="tabs" id="tabs"><button data-tab="cpu">CPU</button><button data-tab="ram">Memory</button><button data-tab="gpu">GPU</button></div></div>
 <div class="dsum" id="dsum">Reading processes…</div><div class="dcols"><span class="label">App · processes</span><span class="label" id="dcol" style="text-align:right">CPU</span></div><div id="dlist"></div></div>
+<div id="voicelog" role="dialog" aria-label="What you said to Rigved"><div class="dhead"><button id="vback" class="back">← Back</button><h3>Voice</h3></div>
+<div class="dsum" id="vsum">Reading your conversations…</div><div id="vlist"></div>
+<form id="vask"><input id="vq" placeholder="Type to Rigved: open Downloads, what time is it…" autocomplete="off" aria-label="Type a command for Rigved"><button id="vsend" aria-label="Send to Rigved">➜</button></form></div>
+<div id="activity" role="dialog" aria-label="What Rigveda is doing"><div class="dhead"><button id="aback" class="back">← Back</button><h3>Activity</h3></div>
+<div class="dsum" id="asum">Reading activity…</div><div class="scroll"><div id="stages"></div>
+<div class="label" id="feed-label" style="margin-top:10px">Just read from Google Drive</div><div class="feed" id="feed"></div>
+<div class="label" style="margin-top:6px">Log · every Rigveda service · newest first</div><div class="logs" id="logs"></div></div></div>
 <div class="readouts" id="readouts"></div>
 <div class="activity"><div class="row"><span class="label">Index activity · 30 days</span><span id="act-total"></span></div><div class="bars" id="bars"></div></div>
 <div class="alerts" id="alerts"></div>
 <div id="log"><div class="msg ai">Hi. Ask me anything about your files.</div></div>
 <form id="ask"><input id="q" placeholder="Ask anything…" autocomplete="off" aria-label="Your question"><button id="send" aria-label="Ask">➜</button></form>
-<footer><a id="status-link" href="/status" target="_blank">Status page ↗</a><a id="quit">Quit</a></footer></section>
+<footer><a id="status-link" href="/status" target="_blank">Status page ↗</a><a id="activity-link">Activity</a><a id="voice-link">Voice</a><a id="quit">Quit</a></footer></section>
+<i class="grip n" data-edge="n"></i><i class="grip ne" data-edge="ne"></i><i class="grip e" data-edge="e"></i><i class="grip se" data-edge="se"></i>
+<i class="grip s" data-edge="s"></i><i class="grip sw" data-edge="sw"></i><i class="grip w" data-edge="w"></i><i class="grip nw" data-edge="nw"></i>
 <script>
 const native=new URLSearchParams(location.search).has('native')&&window.webkit?.messageHandlers?.orb;
 const post=m=>native&&window.webkit.messageHandlers.orb.postMessage(JSON.stringify(m));
@@ -372,7 +405,7 @@ for(const [i,name] of METERS.entries()){const a0=i*90+6,a1=a0+78;for(const cls o
   if(cls==='fill'){m.dataset.meter=name;m.setAttribute('stroke-dasharray','0 100')}orb.querySelector('.meters').append(m)}}
 const mini=orb.cloneNode(true);mini.removeAttribute('id');mini.removeAttribute('role');mini.removeAttribute('tabindex');mini.setAttribute('aria-hidden','true');$('mini').append(mini);
 function expand(){if(document.body.className==='panel')return;post({cmd:'expand'});document.body.className='panel';load(true);setTimeout(()=>$('q').focus(),250)}
-function collapse(){if(!native)return;closeDetails();document.body.className='orb';post({cmd:'collapse'});animate()}
+function collapse(){if(!native)return;closeDetails();closeActivity();document.body.className='orb';post({cmd:'collapse'});animate()}
 let press=null;
 // Springs: the orb bobs, leans toward the pointer anywhere on screen (the window sends look(dx, dy), pixels from
 // the orb's centre), squashes when pressed and bounces back.
@@ -382,7 +415,7 @@ window.look=(dx,dy)=>{ptr={x:dx,y:dy};clearTimeout(idle);idle=setTimeout(()=>{pt
 const spring=(k,x,v,to,stiff,damp,dt)=>{v+=(-stiff*(x-to)-damp*v)*dt;S[k]=x+v*dt;return v};
 function frame(t){if(document.body.className!=='orb'){running=false;return}
   const dt=Math.min(.033,(t-(lastT||t))/1000);lastT=t;
-  S.vs=spring('s',S.s,S.vs,held?.9:hover?1.08:1,260,11,dt);S.vq=spring('q',S.q,S.vq,held?.07:0,300,10,dt);
+  S.vs=spring('s',S.s,S.vs,held?.9:Math.max(hover?1.08:1,voiceFrame(dt)),260,11,dt);S.vq=spring('q',S.q,S.vq,held?.07:0,300,10,dt);
   S.vt=spring('t',S.t,S.vt,ptr?Math.max(-1,Math.min(1,ptr.x/160))*9:0,90,9,dt);
   const bob=Math.sin(t/1000*1.7)*2.4;
   body.setAttribute('transform',`translate(60 ${(60+bob).toFixed(2)}) rotate(${S.t.toFixed(2)}) scale(${(S.s*(1+S.q)).toFixed(3)} ${(S.s*(1-S.q)).toFixed(3)}) translate(-60 -60)`);
@@ -397,8 +430,44 @@ orb.addEventListener('mousedown',e=>{if(e.button===0)press={x:e.screenX,y:e.scre
 addEventListener('mousemove',e=>{if(press&&!press.moved&&Math.hypot(e.screenX-press.x,e.screenY-press.y)>4){press.moved=true;held=false;post({cmd:'drag'});press=null}});
 addEventListener('mouseup',()=>{if(press&&!press.moved)setTimeout(expand,140);press=null});
 orb.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' ')expand()});
-$('close').onclick=collapse;addEventListener('keydown',e=>{if(e.key==='Escape'){if($('drawer').classList.contains('on'))closeDetails();else collapse()}});
+$('close').onclick=collapse;addEventListener('keydown',e=>{if(e.key==='Escape'){if($('activity').classList.contains('on'))closeActivity();else if($('drawer').classList.contains('on'))closeDetails();else collapse()}});
 $('quit').onclick=()=>post({cmd:'quit'});
+// Voice: what you said to Rigved by voice and what it said back, newest at the bottom.
+let voiceTimer=null,voiceSeen=-1;
+function showVoice(){$('voicelog').classList.add('on');voiceSeen=-1;voices();clearInterval(voiceTimer);voiceTimer=setInterval(voices,3000);setTimeout(()=>$('vq').focus(),50)}
+function closeVoice(){$('voicelog').classList.remove('on');clearInterval(voiceTimer);voiceTimer=null}
+async function voices(){let d;try{d=await (await fetch('/api/voice')).json()}catch{$('vsum').textContent='The local server is not responding.';return}
+  const list=$('vlist'),n=d.entries.length;if(n===voiceSeen||vbusy)return;voiceSeen=n;
+  $('vsum').textContent=n?`${n} conversation${n===1?'':'s'} · hold the talk key, or type below`:'Nothing yet. Hold the talk key and speak, or type below.';
+  list.replaceChildren();let day='';
+  for(const e of d.entries){const t=new Date(e.at*1000),label=t.toLocaleDateString([], {weekday:'short',month:'short',day:'numeric'});
+    if(label!==day){day=label;list.append(el('time',null,label))}
+    const you=el('div','msg you',(e.typed?'⌨ ':'')+(e.heard||'…'));you.title=t.toLocaleTimeString()+(e.typed?' · typed':' · spoken');list.append(you);
+    if(e.did?.length)list.append(el('div','did',e.did.join(' · ')));list.append(el('div','msg ai',e.said))}
+  list.scrollTop=1e9}
+// Typing to Rigved: the listener carries it out like something said, and answers here in text.
+let vbusy=false;
+$('vask').addEventListener('submit',async e=>{e.preventDefault();const text=$('vq').value.trim();if(!text||vbusy)return;vbusy=true;$('vsend').disabled=true;$('vq').value='';
+  const list=$('vlist');list.append(el('div','msg you','⌨ '+text));const reply=el('div','msg ai wait','On it…');list.append(reply);list.scrollTop=1e9;
+  try{const r=await fetch('/api/voice',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});const d=await r.json();
+    reply.classList.remove('wait');reply.textContent=d.said||d.error||'No answer came back.'}
+  catch{reply.classList.remove('wait');reply.textContent='The local server could not pass that on.'}
+  finally{vbusy=false;$('vsend').disabled=false;$('vq').focus();voiceSeen=-1;voices()}});
+$('voice-link').onclick=showVoice;$('vback').onclick=closeVoice;$('close').addEventListener('click',closeVoice);
+addEventListener('keydown',e=>{if(e.key==='Escape'&&$('voicelog').classList.contains('on')){e.stopImmediatePropagation();closeVoice()}},true);
+// Voice: the listener's state and loudness, passed in by the window (orb.py) as voice(state, level). The orb pops
+// when the microphone opens, swells and glows with your voice, spins while thinking and pulses as it answers.
+let vstate='idle',vlevel=0,glow=0;
+window.voice=(state,level)=>{if(state!==vstate){const root=document.documentElement;
+  for(const s of ['listening','thinking','speaking'])root.classList.toggle('v-'+s,s===state);
+  if(state==='listening')S.vs+=5;vstate=state;animate()}vlevel=level};
+function voiceFrame(dt){const want=vstate==='listening'?.45+vlevel*.55:vstate==='speaking'?.15+vlevel*.7:vstate==='thinking'?.25:0;
+  glow+=(want-glow)*Math.min(1,dt*14);
+  orb.style.filter=glow>.02?`drop-shadow(0 0 ${(8+glow*14).toFixed(1)}px rgba(94,231,255,${(.4+glow*.55).toFixed(2)}))`:'';
+  return vstate==='listening'?1.05+vlevel*.06:vstate==='speaking'?1+vlevel*.05:1}
+// Resizing: the mouse wheel over the orb grows or shrinks it; the panel's edges and corners drag.
+let wheelAt=0;orb.addEventListener('wheel',e=>{e.preventDefault();const t=performance.now();if(t-wheelAt<60)return;wheelAt=t;post({cmd:'zoom',step:e.deltaY<0?1:-1})},{passive:false});
+document.querySelectorAll('.grip').forEach(g=>g.addEventListener('mousedown',e=>{if(e.button===0){e.preventDefault();post({cmd:'resize',edge:g.dataset.edge})}}));
 $('status-link').onclick=e=>{if(native){e.preventDefault();post({cmd:'open',url:location.origin+'/status'})}};
 function tick(){const d=new Date();$('clock').replaceChildren(d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}),
   el('small',null,d.toLocaleDateString([], {weekday:'short',month:'short',day:'numeric'}).toUpperCase()))}
@@ -423,6 +492,9 @@ function render(animate){if(!data)return;
   const al=$('alerts');al.replaceChildren();const add=(cls,icon,text)=>{const a=el('div','alert '+cls);a.append(el('span','i',icon),el('span',null,text));al.append(a)};
   for(const s of down)add(s.state==='failed'?'bad':'warn','!',`${s.name} is ${(STATES[s.state]||STATES.unknown)[2].toLowerCase()}.`);
   if(data.skipped.length)add('warn','!',`${data.skipped.length} file${data.skipped.length>1?'s':''} skipped · ${data.skipped[0].reason.replace(/^\\w+Error: /,'')}`);
+  if(data.drive){const g=data.drive,done=g.stages.reduce((a,s)=>a+s.done,0),now=g.stages.find(s=>s.done<s.files);
+    if(done<g.files){add(g.running?'ok':'warn',g.running?'↻':'!',`Google Drive: ${num(done)} of ${num(g.files)} read`+(now?` · now ${now.name}`:'')+(g.running?'':' · paused')+' ›');
+      const a=al.lastChild;a.classList.add('link');a.title='Show progress and logs';a.onclick=showActivity}}
   if(!al.children.length)add('ok','✓','Every file in your folders is indexed.')}
 async function load(animate){try{const r=await fetch('/api/status');data=await r.json();render(animate)}
   catch{data=null;document.querySelectorAll('[data-arc]').forEach(a=>a.setAttribute('class','arc bad'));$('tagline').textContent='Server not responding'}}
@@ -454,6 +526,30 @@ const METRIC={cpu:{col:'CPU',key:'cpu',fmt:a=>a.cpu.toFixed(1)+'%',pct:a=>a.cpu}
   gpu:{col:'GPU',key:'gpu_memory',fmt:a=>a.gpu?a.gpu.toFixed(0)+'%':MB(a.gpu_memory),pct:a=>a.gpu}};
 function details(t){tab=t;$('drawer').classList.add('on');$('tabs').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab));
   $('dcol').textContent=METRIC[tab].col;procs();clearInterval(procTimer);procTimer=setInterval(procs,2000)}
+let actTimer=null;
+const ago=s=>{const d=Math.max(0,Date.now()/1000-s);return d<60?Math.round(d)+'s':d<3600?Math.round(d/60)+'m':Math.round(d/3600)+'h'};
+const span=s=>s<3600?Math.max(1,Math.round(s/60))+' min':s<86400?(s/3600).toFixed(1)+' h':(s/86400).toFixed(1)+' days';
+const size=b=>!b?'':b<2**20?Math.max(1,Math.round(b/1024))+' KB':b<2**30?(b/2**20).toFixed(1)+' MB':GB(b)+' GB';
+const MARK={indexed:'✓',failed:'✕',waiting:'…',skipped:'–',empty:'○'};
+function showActivity(){$('activity').classList.add('on');activity();clearInterval(actTimer);actTimer=setInterval(activity,3000)}
+function closeActivity(){$('activity').classList.remove('on');clearInterval(actTimer);actTimer=null}
+$('aback').onclick=closeActivity;$('activity-link').onclick=showActivity;if(location.hash==='#activity')setTimeout(showActivity,300);
+async function activity(){let d;try{d=await (await fetch('/api/activity')).json()}catch{$('asum').textContent='The local server is not responding.';return}
+  const g=d.drive,st=$('stages'),feed=$('feed');st.replaceChildren();feed.replaceChildren();
+  $('feed-label').style.display=feed.style.display=g?'':'none';
+  if(g){const done=g.stages.reduce((a,s)=>a+s.done,0),now=g.stages.find(s=>s.done<s.files);
+    $('asum').textContent=`Google Drive · ${num(done)} of ${num(g.files)} files · `+(!g.running?(done<g.files?'paused':'all read'):
+      g.rate?`${g.rate.toFixed(1)} files/s`+(g.eta?` · about ${span(g.eta)} left at this pace`:''):
+      ([...d.log].reverse().find(e=>e.source==='Google Drive')?.message||'checking Drive for changes')+'…');
+    for(const s of g.stages){const r=el('div','stage'+(g.running&&s===now?' now':'')),row=el('div','row'),bar=el('div','bar'),i=el('i');
+      row.append(el('span',null,s.name[0].toUpperCase()+s.name.slice(1)),el('span',null,`${num(s.done)} / ${num(s.files)} · ${s.files?Math.floor(100*s.done/s.files):100}%`));
+      i.style.width=(s.files?100*s.done/s.files:100)+'%';bar.append(i);r.append(row,bar);st.append(r)}
+    for(const f of g.recent){const r=el('div');r.title=f.note||f.state;r.append(el('span',f.state,MARK[f.state]||'·'),el('b',null,f.name||'(no name)'),el('span',null,[size(f.size),ago(f.done_at)].filter(Boolean).join(' · ')));feed.append(r)}}
+  else $('asum').textContent='Google Drive is not connected.';
+  const logs=$('logs'),today=new Date().toDateString();logs.replaceChildren();
+  for(const e of [...d.log].reverse()){const t=new Date(e.time*1000),r=el('div');  // newest first
+    r.append(el('time',null,(t.toDateString()===today?'':t.toLocaleDateString([], {month:'short',day:'numeric'})+' ')+t.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})),el('span',null,e.source),e.message);logs.append(r)}
+  if(!d.log.length)logs.append(el('div',null,'No log lines yet.'))}
 function closeDetails(){$('drawer').classList.remove('on');clearInterval(procTimer);procTimer=null}
 $('back').onclick=closeDetails;if(location.hash.startsWith('#apps'))setTimeout(()=>details(location.hash.split(':')[1]||'cpu'),300);$('tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>details(b.dataset.tab));
 async function procs(){let d;try{d=await (await fetch('/api/processes')).json()}catch{$('dsum').textContent='Could not read processes.';return}
@@ -551,6 +647,25 @@ def make_handler(config: ServerConfig):
             self.respond(HTTPStatus.UNAUTHORIZED, {"error": "Missing or wrong token. Run `rigveda token` and paste it into the extension's options."})
             return False
 
+        def voice_post(self) -> None:
+            """A command typed in the orb's Voice tab, passed to the voice listener, which carries it out."""
+            from . import voice
+
+            if self.server.server_address[0] not in LOOPBACK and not self.authorized():
+                return  # it opens apps and plays media, so from another device it needs the token
+            try:
+                text = self.body().get("text", "")
+                if not isinstance(text, str) or not text.strip() or len(text) > voice.TYPED_LONGEST:
+                    raise ValueError
+            except (ValueError, json.JSONDecodeError):
+                self.respond(HTTPStatus.BAD_REQUEST, {"error": f"Type 1–{voice.TYPED_LONGEST:,} characters."})
+                return
+            try:
+                self.respond(HTTPStatus.OK, voice.send(text.strip()))
+            except (OSError, ValueError):
+                self.respond(HTTPStatus.SERVICE_UNAVAILABLE,
+                             {"error": "Rigved isn't listening. Start it with `systemctl --user start rigveda-listen`."})
+
         def suggest_post(self) -> None:
             try:
                 fields = self.body().get("fields")
@@ -617,6 +732,17 @@ def make_handler(config: ServerConfig):
                 return
             if self.path == "/api/system":
                 self.respond(HTTPStatus.OK, status.system())
+                return
+            if self.path == "/api/voice":
+                from .voice import history
+                self.respond(HTTPStatus.OK, {"entries": history()})
+                return
+            if self.path == "/api/activity":
+                con = connect(config.database)
+                try:
+                    self.respond(HTTPStatus.OK, status.activity(con))
+                finally:
+                    con.close()
                 return
             if self.path == "/api/status":
                 con = connect(config.database)
@@ -687,6 +813,9 @@ def make_handler(config: ServerConfig):
             if self.path == "/api/facts" or re.fullmatch(r"/api/facts/\d+", self.path):
                 self.facts_post()
                 return
+            if self.path == "/api/voice":
+                self.voice_post()
+                return
             if self.path != "/api/chat":
                 self.respond(HTTPStatus.NOT_FOUND, {"error": "Not found"})
                 return
@@ -701,15 +830,18 @@ def make_handler(config: ServerConfig):
             except (ValueError, json.JSONDecodeError):
                 self.respond(HTTPStatus.BAD_REQUEST, {"error": "Send a valid question under 6,000 characters."})
                 return
-            sources = search(config.database, question, config.limit, config.settings)
+            talked = conversation.messages()  # so a follow-up ("and the deposit?") finds the right files
+            sources = search(config.database, conversation.standalone(question, config.ollama, config.model),
+                             config.limit, config.settings)
             if not sources:
                 self.respond(HTTPStatus.OK, {"answer": "I could not find matching indexed text. Index a folder first, or try different terms.", "sources": []})
                 return
             try:
-                answer = ask(question, sources, config.model, config.ollama)
+                answer = ask(question, sources, config.model, config.ollama, talked)
             except OllamaError as error:
                 self.respond(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(error), "sources": []})
                 return
+            conversation.add(question, answer, "chat")
             self.respond(HTTPStatus.OK, {"answer": answer, "sources": [{"path": row["path"], "chunk": row["ordinal"] + 1, "cite": cite(row)} for row in sources]})
 
     return Handler
