@@ -181,7 +181,7 @@ def test_without_the_name_anything_in_your_voice_said_to_rigved_is_taken(listene
     listener.holds = keyboard.Holds()
     calls = iter([None, None, "space", None])  # asked only of what was in your voice
     real = listener.holds.during
-    listener.holds.during = lambda start, end: next(calls) == "space"  # Space held during the fourth
+    listener.holds.during = lambda start, end, margin=1.0: margin and next(calls) == "space"  # Space held during the fourth
     recording = iter([[], [], ["Zoom"]])  # a meeting during the fifth (Space was held during the fourth)
     monkeypatch.setattr(voice, "recording", lambda: next(recording))
     answered = []
@@ -354,3 +354,24 @@ def test_muting_closes_the_microphone_until_unmuted(listener, monkeypatch, tmp_p
     listener.listen_for_name()  # returns at once: the microphone closes
     assert opened == [1]
     assert voice.mute(False) is False and not voice.muted()
+
+
+def test_speech_while_space_is_held_is_kept_as_yours_to_train_on(listener) -> None:
+    kept = []
+
+    class Voiceprint:
+        def heard(self, audio, kind, score=None):
+            kept.append(kind)
+
+    class Holds:
+        def __init__(self, held):
+            self.held = held
+
+        def during(self, start, end, margin=1.0):
+            return self.held
+
+    listener.voiceprint = Voiceprint()
+    for held in (True, False):
+        listener.holds = Holds(held)
+        listener.keep(np.zeros(voice.RATE, dtype=np.float32), 0.9)
+    assert kept == ["you", "heard"]

@@ -329,21 +329,28 @@ class Listener:
         voiceprint = getattr(self, "voiceprint", None)
         return None if voiceprint is None else voiceprint.score(audio)
 
+    def dictating(self, began: float, ended: float, margin: float = 1.0) -> bool:
+        """Whether Space was held for Claude Code's dictation while this was said (give or take `margin` seconds): then
+        it was you, and not for Rigved."""
+        holds = getattr(self, "holds", None)
+        return holds is not None and holds.during(began, ended, margin)
+
     def elsewhere(self, began: float, ended: float) -> str:
         """Why speech from `began` to `ended` (time.monotonic()) was for something else, or "": Space held for Claude
         Code's dictation, or another app (a call, a meeting) using the microphone."""
-        holds = getattr(self, "holds", None)
-        if holds is not None and holds.during(began, ended):
+        if self.dictating(began, ended):
             return "Space held: that was for Claude"
         if apps := recording():
             return f"{', '.join(apps)} using the microphone"
         return ""
 
     def keep(self, audio: np.ndarray, score: float | None) -> None:
-        """Keep what was heard hands-free, with its score, to train voice match on (`rigveda listen --train`)."""
+        """Keep what was heard hands-free to train voice match on (`rigveda listen --train`): said holding Space for
+        Claude's dictation, it's you for certain, with no labelling; anything else with its score, to be labelled."""
         voiceprint = getattr(self, "voiceprint", None)
         if voiceprint is not None:
-            voiceprint.heard(audio, "heard", score)
+            now = time.monotonic()
+            voiceprint.heard(audio, "you" if self.dictating(now - len(audio) / RATE, now, margin=0) else "heard", score)
 
     def show(self, state: str, level: float = 0.0) -> None:
         """Tell the orb: idle, listening, thinking or speaking, and how loud. At most 30 times a second."""

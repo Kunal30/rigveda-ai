@@ -90,3 +90,18 @@ def test_questions_go_to_claude_unless_theyre_about_you(monkeypatch) -> None:
     assert asked == ["why do cats purr"] and searched == ["what's my lease deposit"]  # yours never went to Claude
     assert actions.carry_out([actions.Step("talk", "what's the deposit on the lease")], config) == "From your files."
     assert searched[-1] == "what's the deposit on the lease"  # Claude handed it back
+
+
+def test_the_time_somewhere_else_goes_to_claude(monkeypatch) -> None:
+    from rigveda import llm
+
+    monkeypatch.setattr(llm, "quick", lambda *args, **kwargs: '{"steps": [{"action": "time", "target": ""}]}')
+    assert actions.understand("what time is it in London right now", Config()) == [actions.Step("talk", "what time is it in London right now")]
+    assert actions.understand("what's the UTC time", Config()) == [actions.Step("talk", "what's the UTC time")]
+    assert actions.understand("what time is it now", Config()) == [actions.Step("time", "")]
+
+
+def test_what_rigved_cant_do_yet_is_said_plainly() -> None:
+    said = actions.carry_out([actions.Step("unknown", "reboot the system")], Config())
+    assert said in actions.PERSONAS["witty"]["cant"]
+    assert actions.carry_out([actions.Step("unknown", "mm")], Config()) in actions.PERSONAS["witty"]["unsure"]

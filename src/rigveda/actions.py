@@ -226,7 +226,12 @@ def understand(command: str, config: Config) -> list[Step]:
         steps = [Step(str(step.get("action", "")), str(step.get("target", "")).strip()) for step in json.loads(reply)["steps"]]
     except (llm.OllamaError, ValueError, KeyError, TypeError, AttributeError):
         return [Step("talk", command)]
+    if any(step.kind in ("time", "date") for step in steps) and re.search(ELSEWHERE, command.lower()):
+        return [Step("talk", command)]  # "what time is it in London" isn't the time here: Claude knows
     return [step for step in steps if step.kind in KINDS] or [Step("unknown", command)]
+
+
+ELSEWHERE = r"\b(?:in|at|utc|gmt|zone|timezone|until|since|ago|from now)\b"
 
 
 def quick(text: str) -> bool:
@@ -241,8 +246,9 @@ Rigved itself, or about their work), talking on calls, talking to people in the 
 this was said TO Rigved, expecting Rigved to do or answer it.
 
 Said to Rigved: a command for the computer (open, play, pause, volume, find a file), a question Rigved could answer \
-for them (weather, facts, explanations, the time, their own files), a request (tell me a joke), or a reply to what \
-Rigved just said.
+for them (weather, facts, explanations, the time, their own files), a request (tell me a joke), a reply to what \
+Rigved just said, or anything said directly to "you" (are you listening to me, I'm going for a walk, see you later). \
+Dictation to other AIs is already filtered out, so when unsure between a request and thinking aloud, choose true.
 Not said to Rigved: talk ABOUT Rigved or "it" (is it listening, it's not responsive, how many clips are done), \
 feedback or instructions about building or fixing software, work discussion (incidents, jobs, datasets, models, \
 code), greetings or chat with other people, fragments, and thinking aloud.
@@ -252,6 +258,8 @@ Examples:
 "open my downloads folder" -> true
 "why do cats purr" -> true
 "is it listening right now" -> false
+"are you even listening to me" -> true
+"I'm going for a walk, back soon" -> true
 "it still waits fifteen seconds, it's not snappy" -> false
 "we need to rerun the dataflow job on all datasets" -> false
 "hey, how are you doing" -> false
@@ -263,7 +271,7 @@ Conversation with Rigved so far:
 They just said: {said}
 
 Reply with JSON only."""
-# Tried on 22 things you said on 2026-10-25 (requests, and dictation to Claude): 21 right with qwen3:14b, 0.17 s each.
+# Tried on things you said on 2026-10-25 (requests, and dictation to Claude): see tests in the session notes.
 ADDRESSED_FORMAT = {"type": "object", "properties": {"for_rigved": {"type": "boolean"}}, "required": ["for_rigved"]}
 
 
@@ -507,6 +515,7 @@ PERSONAS = {
                   "Go ahead, make it interesting."],
         "done": ["Done.", "Consider it handled.", "Easy."],
         "unsure": ["Didn't catch that. Run it by me again?", "Missed that one. Again, maybe slower?"],
+        "cant": ["That one's beyond me for now. Give me a few upgrades.", "Can't do that yet. Soon, though."],
         "bye": ["Fine. I'll be here, being brilliant.", "Going quiet. Call me when you need a genius."],
         "broke": "Something broke. Not my fault, probably.",
         "folder": "{name}, open. Try not to judge the clutter.", "app": "{name}, up and running.",
@@ -528,6 +537,7 @@ PERSONAS = {
         "greet": ["Yes, my child. I am listening.", "Speak, and I shall listen.", "Haan, beta. What do you seek?",
                   "I am here. Tell me what you need."],
         "done": ["Tathaastu.", "So be it.", "It is done."],
+        "cant": ["That is not yet within my power, my child."],
         "unsure": ["Forgive me, my child. Those words escape me. Say them once more.",
                    "The meaning eludes me, beta. Speak it again, a little differently."],
         "bye": ["Very well. I shall rest, but never far.", "As you wish. Call, and I will be here."],
@@ -626,7 +636,9 @@ def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = Fals
     for step in steps:
         if step.kind == "stop":
             return line(config, "bye")
-        if step.kind == "unknown" or (not step.target and step.kind in ("open", "find", "search", "ask", "talk", "volume", "media")):
+        if step.kind == "unknown" and meaningful(step.target) and len(words(step.target)) > 1:
+            said.append(line(config, "cant"))  # heard it fine; it's something Rigved can't do yet ("reboot the system")
+        elif step.kind == "unknown" or (not step.target and step.kind in ("open", "find", "search", "ask", "talk", "volume", "media")):
             said.append(line(config, "unsure"))
         elif step.kind == "time":
             now = datetime.datetime.now()
