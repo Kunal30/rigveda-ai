@@ -53,6 +53,7 @@ INTERRUPT = 0.6  # seconds of you talking over Rigved before it stops to listen
 INTERRUPT_MATCH = 0.55  # stricter than MATCH: through the TV, Rigved's own voice scored up to 0.44 as you (2026-10-25)
 HISTORY = _xdg("XDG_DATA_HOME", ".local/share") / "rigveda" / "voice-history.jsonl"  # what you said and what it said
 KEEP = 1000  # conversations kept in the history
+MUTED = STATE.with_name("rigveda-muted")  # there while Rigved is muted from the orb: hands-free, the microphone is closed
 SOCKET = STATE.with_name("rigveda-voice.sock")  # typed commands from the orb's Voice tab, by way of the server
 TYPED_LONGEST = 2_000  # characters
 
@@ -594,20 +595,35 @@ class Listener:
         return self.respond(command)
 
     def run_wake(self) -> None:
-        """Listen for the name alongside the keys; start again if the microphone goes away (a headset unplugged)."""
+        """Listen hands-free alongside the keys; start again if the microphone goes away (a headset unplugged). While
+        muted from the orb, the microphone is closed."""
+        self.quiet = threading.Event()  # set while muted
+        threading.Thread(target=self.watch_mute, daemon=True).start()
         while True:
+            if self.quiet.is_set():
+                time.sleep(0.5)
+                continue
             try:
                 self.listen_for_name()
             except Exception as error:
                 self.log(f"Stopped listening for the name ({type(error).__name__}: {error}); opening the microphone again.")
                 time.sleep(1)
 
+    def watch_mute(self) -> None:
+        while True:
+            if muted() != self.quiet.is_set():
+                (self.quiet.set if muted() else self.quiet.clear)()
+                self.log("Muted: not listening hands-free (the talk key still works)." if muted() else "Listening again.")
+            time.sleep(0.5)
+
     def listen_for_name(self) -> None:
         with Ears(watch=True) as ears:
             self.log('Listening. Say "Rigved" or "Hey Rigved", then what you want.' if self.config.need_name else
                      'Listening to your voice: just say what you want (not while Space is held, which is for Claude).')
             while True:
-                audio = ears.next(finished=getattr(self, "finished", None))
+                audio = ears.next(finished=getattr(self, "finished", None), cancel=getattr(self, "quiet", None))
+                if audio is None:  # muted: close the microphone
+                    return
                 began = time.monotonic() - len(audio) / RATE
                 if self.busy.locked() or began < self.done:  # said during a conversation, or Rigved talking
                     continue
@@ -705,6 +721,19 @@ class Listener:
             return ""
         finally:
             ears.level = lambda value: None
+
+
+def muted() -> bool:
+    return MUTED.exists()
+
+
+def mute(on: bool) -> bool:
+    """Mute or unmute hands-free listening (the talk key still works); whether it's muted now. Until the next login."""
+    if on:
+        MUTED.touch()
+    else:
+        MUTED.unlink(missing_ok=True)
+    return muted()
 
 
 def recording() -> list[str]:

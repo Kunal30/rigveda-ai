@@ -270,6 +270,13 @@ html.v-thinking .art .spin{animation-duration:1.2s}html.v-thinking .art .rev{ani
 html.v-listening header .art{animation:hear 1s ease-in-out infinite alternate}html.v-speaking header .art{filter:drop-shadow(0 0 14px rgba(94,231,255,.9))}
 @keyframes hear{from{filter:drop-shadow(0 0 6px rgba(94,231,255,.5))}to{filter:drop-shadow(0 0 18px rgba(94,231,255,1)) brightness(1.25)}}
 body.panel #orb,body.web #orb{display:none}
+/* mute: a badge on the orb (on hover, or always while muted) and a button in the panel */
+html.muted #orb{filter:grayscale(.85) brightness(.6)!important}
+#mutebadge{position:fixed;left:calc(50% + 22vmin);top:calc(50% + 22vmin);width:22vmin;height:22vmin;padding:4.5vmin;border-radius:50%;display:none;cursor:pointer;
+  background:rgba(2,9,18,.88);border:1px solid var(--cyan-dim);color:var(--cyan);box-shadow:0 0 10px rgba(94,231,255,.35);z-index:3}
+#mutebadge svg,.icon-btn svg{width:100%;height:100%;display:block}body.orb:hover #mutebadge,html.muted body.orb #mutebadge{display:block}
+html.muted #mutebadge,html.muted #mute{color:var(--bad);border-color:var(--bad);box-shadow:0 0 10px rgba(255,92,122,.4)}
+#mute{padding:5px}
 /* edges and corners that resize the panel window */
 .grip{position:fixed;z-index:9;display:none}body.panel .grip{display:block}
 .grip.n,.grip.s{left:18px;right:18px;height:8px;cursor:ns-resize}.grip.n{top:0}.grip.s{bottom:0}.grip.e,.grip.w{top:18px;bottom:18px;width:8px;cursor:ew-resize}.grip.e{right:0}.grip.w{left:0}
@@ -291,7 +298,7 @@ body.panel #panel,body.web #panel{display:flex}body.web #panel{inset:auto;left:5
 header{display:flex;align-items:center;gap:12px;padding:2px 4px 12px;border-bottom:1px solid var(--cyan-faint)}header .art{width:46px;height:46px;flex:none;filter:drop-shadow(0 0 8px rgba(94,231,255,.5))}
 .title{flex:1;min-width:0}.title b{display:block;font-size:17px;letter-spacing:.32em;font-weight:700}.title span{font-size:10px;letter-spacing:.22em;color:var(--muted);text-transform:uppercase}
 .clock{font:600 13px var(--mono);color:var(--cyan);letter-spacing:.08em;text-align:right}.clock small{display:block;font-size:9px;color:var(--muted);letter-spacing:.2em}
-.icon-btn{background:none;border:1px solid var(--cyan-dim);color:var(--cyan);border-radius:9px;width:28px;height:28px;cursor:pointer;font:16px var(--sans);line-height:1}.icon-btn:hover{background:var(--cyan-faint)}body.web .icon-btn{display:none}
+.icon-btn{background:none;border:1px solid var(--cyan-dim);color:var(--cyan);border-radius:9px;width:28px;height:28px;cursor:pointer;font:16px var(--sans);line-height:1}.icon-btn:hover{background:var(--cyan-faint)}body.web #close{display:none}
 .label{font-size:9.5px;letter-spacing:.24em;color:var(--muted);text-transform:uppercase}
 .systems{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 4px}
 .sys{display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px solid var(--cyan-faint);border-radius:12px;background:rgba(94,231,255,.03)}
@@ -363,9 +370,10 @@ footer{display:flex;justify-content:space-between;margin-top:9px;padding:0 22px;
 <path d="M44 52 A17 17 0 0 1 58 41.5 A20 20 0 0 0 47 55 Z" fill="#fff" fill-opacity=".75"/>
 <circle cx="60" cy="60" r="9" fill="#fff" fill-opacity=".7" filter="url(#glow)"/><circle cx="60" cy="60" r="4.5" fill="#fff"/>
 </g></svg>
+<button id="mutebadge" aria-pressed="false"></button>
 <section id="panel" aria-label="Rigveda AI"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
 <header><span id="mini"></span><div class="title"><b>RIGVEDA</b><span id="tagline">Local intelligence</span></div><div class="clock" id="clock"></div>
-<button class="icon-btn" id="close" title="Back to the orb (Esc)">–</button></header>
+<button class="icon-btn" id="mute" aria-pressed="false"></button><button class="icon-btn" id="close" title="Back to the orb (Esc)">–</button></header>
 <div class="systems" id="systems"></div>
 <div class="live" id="live"></div>
 <div id="drawer" role="dialog" aria-label="What's using your computer"><div class="dhead"><button id="back" class="back">← Back</button>
@@ -433,6 +441,18 @@ addEventListener('mouseup',()=>{if(press&&!press.moved)setTimeout(expand,140);pr
 orb.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' ')expand()});
 $('close').onclick=collapse;addEventListener('keydown',e=>{if(e.key==='Escape'){if($('activity').classList.contains('on'))closeActivity();else if($('drawer').classList.contains('on'))closeDetails();else collapse()}});
 $('quit').onclick=()=>post({cmd:'quit'});
+// Mute: Rigved stops listening hands-free (the talk key still works). The badge on the orb shows on hover, and stays
+// while muted, so it's clear at a glance.
+const MIC='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3.5"/></svg>';
+const MIC_OFF='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 9.5V5.5a3 3 0 0 0-5.7-1.3M9 9v2.5a3 3 0 0 0 4.9 2.3M5 11a7 7 0 0 0 11.3 5.5M19 11a7 7 0 0 1-.6 2.8M12 18v3.5M3 3l18 18"/></svg>';
+let muted=null;
+function showMute(m){if(m===muted)return;muted=m;document.documentElement.classList.toggle('muted',m);
+  for(const b of [$('mute'),$('mutebadge')]){b.innerHTML=m?MIC_OFF:MIC;b.title=m?'Rigved is muted. Click to listen again.':'Mute Rigved: stop listening hands-free';b.setAttribute('aria-pressed',String(m))}}
+async function checkMute(){try{showMute((await (await fetch('/api/mute')).json()).muted)}catch{}}
+async function toggleMute(e){e.preventDefault();e.stopPropagation();
+  try{const r=await fetch('/api/mute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({muted:!muted})});showMute((await r.json()).muted)}catch{}}
+for(const b of [$('mute'),$('mutebadge')]){b.addEventListener('click',toggleMute);b.addEventListener('mousedown',e=>e.stopPropagation())}
+showMute(false);checkMute();setInterval(checkMute,2000);
 // Voice: what you said to Rigved by voice and what it said back, newest at the bottom.
 let voiceTimer=null,voiceSeen=-1;
 function showVoice(){$('voicelog').classList.add('on');voiceSeen=-1;voices();clearInterval(voiceTimer);voiceTimer=setInterval(voices,3000);setTimeout(()=>$('vq').focus(),50)}
@@ -667,6 +687,20 @@ def make_handler(config: ServerConfig):
                 self.respond(HTTPStatus.SERVICE_UNAVAILABLE,
                              {"error": "Rigved isn't listening. Start it with `systemctl --user start rigveda-listen`."})
 
+        def mute_post(self) -> None:
+            """Mute or unmute Rigved's hands-free listening, from the orb."""
+            from . import voice
+            if self.server.server_address[0] not in LOOPBACK and not self.authorized():
+                return
+            try:
+                on = self.body().get("muted")
+                if not isinstance(on, bool):
+                    raise ValueError
+            except (ValueError, json.JSONDecodeError):
+                self.respond(HTTPStatus.BAD_REQUEST, {"error": 'Send {"muted": true} or {"muted": false}.'})
+                return
+            self.respond(HTTPStatus.OK, {"muted": voice.mute(on)})
+
         def nearest_post(self) -> None:
             """Meaning search for the voice listener on this computer, so the vectors are in memory once, here.
             Only chunk ids go back, and only to this computer."""
@@ -766,6 +800,10 @@ def make_handler(config: ServerConfig):
                 from .voice import history
                 self.respond(HTTPStatus.OK, {"entries": history()})
                 return
+            if self.path == "/api/mute":
+                from .voice import muted
+                self.respond(HTTPStatus.OK, {"muted": muted()})
+                return
             if self.path == "/api/activity":
                 con = connect(config.database)
                 try:
@@ -847,6 +885,9 @@ def make_handler(config: ServerConfig):
                 return
             if self.path == "/api/nearest":
                 self.nearest_post()
+                return
+            if self.path == "/api/mute":
+                self.mute_post()
                 return
             if self.path != "/api/chat":
                 self.respond(HTTPStatus.NOT_FOUND, {"error": "Not found"})

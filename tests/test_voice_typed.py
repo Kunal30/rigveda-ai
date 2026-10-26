@@ -70,7 +70,9 @@ class FakeEars:
     def __exit__(self, *_):
         return False
 
-    def next(self, timeout=None, finished=None):
+    def next(self, timeout=None, finished=None, cancel=None):
+        if cancel is not None and cancel.is_set():
+            return None
         while self.said:
             speech = self.said.pop(0)
             if speech is not None:
@@ -338,3 +340,17 @@ def test_talking_over_rigved_stops_it_but_its_own_voice_doesnt(listener) -> None
         watcher.join()
         assert listener.hush.is_set() is stops and listener.interrupted is stops
         assert (ears.frames.qsize() > 0) is stops  # what you said is kept for the next turn
+
+
+def test_muting_closes_the_microphone_until_unmuted(listener, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(voice, "MUTED", tmp_path / "muted")
+    assert not voice.muted() and voice.mute(True) and voice.muted()
+    listener.quiet = threading.Event()
+    listener.quiet.set()  # what watch_mute does when muted
+    opened = []
+    monkeypatch.setattr(voice, "Ears", lambda **options: opened.append(1) or FakeEars(["what time is it"]))
+    listener.busy, listener.done = threading.Lock(), 0.0
+    listener.respond = lambda command, ears=None: pytest.fail("heard while muted")
+    listener.listen_for_name()  # returns at once: the microphone closes
+    assert opened == [1]
+    assert voice.mute(False) is False and not voice.muted()
