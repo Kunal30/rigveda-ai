@@ -914,7 +914,7 @@ def make_handler(config: ServerConfig):
             except OllamaError as error:
                 self.respond(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(error), "sources": []})
                 return
-            conversation.add(question, answer, "chat")
+            conversation.add(question, answer, "chat", private=True)  # from your files
             self.respond(HTTPStatus.OK, {"answer": answer, "sources": [{"path": row["path"], "chunk": row["ordinal"] + 1, "cite": cite(row)} for row in sources]})
 
     return Handler

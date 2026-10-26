@@ -50,6 +50,7 @@ STALLED = 3.0  # seconds with no sound at all from an open microphone before it'
 NAME_ALONE = 8.0  # seconds to start the request after saying just "Rigved"
 CONVERSATION = 20.0  # seconds of quiet after an answer that end the conversation (then it's the name again)
 INTERRUPT = 0.6  # seconds of you talking over Rigved before it stops to listen
+QUIET_MATCH = 0.2  # MATCH when nothing is playing, so the TV can't be talking: "Play the movie", said softly over a paused film, scored 0.32 (2026-10-25)
 INTERRUPT_MATCH = 0.55  # stricter than MATCH: through the TV, Rigved's own voice scored up to 0.44 as you (2026-10-25)
 HISTORY = _xdg("XDG_DATA_HOME", ".local/share") / "rigveda" / "voice-history.jsonl"  # what you said and what it said
 KEEP = 1000  # conversations kept in the history
@@ -329,6 +330,12 @@ class Listener:
         voiceprint = getattr(self, "voiceprint", None)
         return None if voiceprint is None else voiceprint.score(audio)
 
+    @staticmethod
+    def match() -> float:
+        """How like you speech must sound to count as you: less when nothing is playing, so short or soft commands
+        aren't lost when there's nothing to mistake for you."""
+        return MATCH if audible() else QUIET_MATCH
+
     def dictating(self, began: float, ended: float, margin: float = 1.0) -> bool:
         """Whether Space was held for Claude Code's dictation while this was said (give or take `margin` seconds): then
         it was you, and not for Rigved."""
@@ -395,11 +402,13 @@ class Listener:
             self.log(f"{'Typed' if typed else 'Heard'}: {command!r} → "
                      f"{', '.join(f'{step.kind} {step.target!r}' for step in steps) or 'nothing'}")
             opened: list[dict] = []
-            reply = actions.carry_out(steps, self.config, self.log, opened=opened, searching=searching)
+            private: list = []  # answered from your files: kept from Claude
+            reply = actions.carry_out(steps, self.config, self.log, opened=opened, searching=searching, private=private)
             did = [f"{step.kind} {step.target}".strip() for step in steps]
             self.log(f"Said: {reply}")
             if not any(step.kind == "forget" for step in steps):
-                conversation.add(command, reply, "typed" if typed else "voice", opened[-1] if opened else None)
+                conversation.add(command, reply, "typed" if typed else "voice", opened[-1] if opened else None,
+                                 private=bool(private))
         except Exception as error:  # keep going whatever went wrong
             self.log(f"Couldn't do {command!r}: {type(error).__name__}: {error}")
             did, reply = [f"failed: {type(error).__name__}"], actions.line(self.config, "broke")
@@ -633,10 +642,11 @@ class Listener:
                     return
                 began = time.monotonic() - len(audio) / RATE
                 if self.busy.locked() or began < self.done:  # said during a conversation, or Rigved talking
+                    self.log("Passed over: said while Rigved was busy.")
                     continue
                 score = self.score(audio)
                 self.keep(audio, score)
-                if score is not None and score < MATCH:
+                if score is not None and score < self.match():
                     self.log(f"Not your voice ({score:.2f}).")
                     continue
                 if why := self.elsewhere(began, time.monotonic()):
@@ -708,7 +718,7 @@ class Listener:
                     return ""
                 score = self.score(audio)
                 self.keep(audio, score)
-                if score is not None and score < MATCH:
+                if score is not None and score < self.match():
                     self.log(f"Not your voice ({score:.2f}); still listening.")
                     continue
                 if why := self.elsewhere(time.monotonic() - len(audio) / RATE, time.monotonic()):
@@ -743,9 +753,9 @@ def mute(on: bool) -> bool:
     return muted()
 
 
-def recording() -> list[str]:
-    """Other apps recording from the microphone right now (a call, a meeting, dictation), by name; Rigved's own
-    stream, through PipeWire's ALSA plugin, is left out."""
+def streams(kind: str, own: bool = False) -> list[str]:
+    """The apps with a running audio stream of `kind` ("Input": recording, "Output": playing), by name; Rigved's own,
+    through PipeWire's ALSA plugin, only with `own`. A paused film's stream is idle, not running."""
     try:
         found = subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=3).stdout
         nodes = json.loads(found or "[]")
@@ -755,12 +765,22 @@ def recording() -> list[str]:
     for node in nodes:
         info = node.get("info") or {}
         props = info.get("props") or {}
-        if props.get("media.class") != "Stream/Input/Audio" or info.get("state") != "running":
+        if props.get("media.class") != f"Stream/{kind}/Audio" or info.get("state") != "running":
             continue
         app = props.get("application.name") or props.get("node.name") or "an app"
-        if "python" not in app.lower() and app not in apps:
+        if (own or "python" not in app.lower()) and app not in apps:
             apps.append(app)
     return apps
+
+
+def recording() -> list[str]:
+    """Other apps recording from the microphone right now (a call, a meeting, dictation)."""
+    return streams("Input")
+
+
+def audible() -> bool:
+    """Whether anything is playing sound (a film, a video, music, Rigved itself) that could be taken for you."""
+    return bool(streams("Output", own=True))
 
 
 PASSAGE = """Hey Rigved, it's me. I'm reading this so you know my voice from anyone else's.

@@ -187,3 +187,29 @@ def test_media_commands_are_done_quietly_and_any_wording_works(monkeypatch: pyte
     assert actions.carry_out([Step("media", "resume")], Config(), log=lambda message: None) == ""
     assert actions.carry_out([Step("media", "whatever")], Config(), log=lambda message: None) == ""
     assert pressed == ["org.mpris.MediaPlayer2.Player.Play", "org.mpris.MediaPlayer2.Player.PlayPause"]
+
+
+def test_volume_turns_the_apps_not_rigved_and_keeps_the_speakers_full(monkeypatch) -> None:
+    import json
+    import subprocess
+
+    levels = {"@DEFAULT_AUDIO_SINK@": 0.6, "84": 1.5}  # speakers turned down to 60%, VLC at 150%
+    streams = [{"id": 84, "info": {"props": {"media.class": "Stream/Output/Audio", "application.name": "VLC"}}},
+               {"id": 91, "info": {"props": {"media.class": "Stream/Output/Audio",
+                                             "application.name": "PipeWire ALSA [python3.14]"}}}]
+
+    def run(command, **options):
+        if command[0] == "pw-dump":
+            return subprocess.CompletedProcess(command, 0, json.dumps(streams))
+        if command[1] == "get-volume":
+            return subprocess.CompletedProcess(command, 0, f"Volume: {levels[command[2]]:.2f}\n")
+        if command[1] == "set-volume":
+            value = command[-1]
+            levels[command[-2]] = int(value[:-1]) / 100 if value.endswith("%") else float(value)
+        return subprocess.CompletedProcess(command, 0, "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert actions.volume("60%") is True
+    assert levels == {"@DEFAULT_AUDIO_SINK@": 1.0, "84": 0.6}  # Rigved's own stream (91) never touched
+    streams.pop(0)
+    assert actions.volume("up") is False  # nothing but Rigved: nothing to turn
