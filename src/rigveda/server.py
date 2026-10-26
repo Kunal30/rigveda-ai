@@ -6,6 +6,7 @@ import hmac
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -666,6 +667,34 @@ def make_handler(config: ServerConfig):
                 self.respond(HTTPStatus.SERVICE_UNAVAILABLE,
                              {"error": "Rigved isn't listening. Start it with `systemctl --user start rigveda-listen`."})
 
+        def nearest_post(self) -> None:
+            """Meaning search for the voice listener on this computer, so the vectors are in memory once, here.
+            Only chunk ids go back, and only to this computer."""
+            from . import embeddings
+            from .store import connect
+
+            if self.client_address[0] not in LOOPBACK or config.settings is None:
+                self.respond(HTTPStatus.FORBIDDEN, {"error": "Only for Rigveda on this computer."})
+                return
+            try:
+                payload = self.body()
+                question, limit = payload.get("question"), payload.get("limit", 50)
+                if not isinstance(question, str) or not question.strip() or not isinstance(limit, int) or not 0 < limit <= 200:
+                    raise ValueError
+            except (ValueError, json.JSONDecodeError):
+                self.respond(HTTPStatus.BAD_REQUEST, {"error": "Send a question and a limit of 1–200."})
+                return
+            con = connect(config.database)
+            try:
+                ids = embeddings.nearest(con, config.settings, question, limit)
+                database = con.execute("PRAGMA database_list").fetchone()[2]
+            except OllamaError as error:
+                self.respond(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(error)})
+                return
+            finally:
+                con.close()
+            self.respond(HTTPStatus.OK, {"ids": ids, "database": database})
+
         def suggest_post(self) -> None:
             try:
                 fields = self.body().get("fields")
@@ -816,6 +845,9 @@ def make_handler(config: ServerConfig):
             if self.path == "/api/voice":
                 self.voice_post()
                 return
+            if self.path == "/api/nearest":
+                self.nearest_post()
+                return
             if self.path != "/api/chat":
                 self.respond(HTTPStatus.NOT_FOUND, {"error": "Not found"})
                 return
@@ -850,6 +882,20 @@ def make_handler(config: ServerConfig):
 def run_server(config: ServerConfig, host: str = "127.0.0.1", port: int = 8765) -> None:
     httpd = ThreadingHTTPServer((host, port), make_handler(config))
     print(f"Rigveda AI is listening at http://{host}:{port}")
+    if config.settings is not None:  # the first question shouldn't be the one that waits for every vector to load
+        import threading
+
+        from . import embeddings
+
+        def warm() -> None:
+            started = time.monotonic()
+            try:
+                embeddings.warm(config.database, config.settings)
+                print(f"Meaning search ready ({time.monotonic() - started:.0f} s to load).", flush=True)
+            except Exception as error:
+                print(f"Couldn't load meaning search ahead of time ({type(error).__name__}: {error}).", flush=True)
+
+        threading.Thread(target=warm, daemon=True).start()
     print("Press Ctrl+C to stop the server.")
     try:
         httpd.serve_forever()

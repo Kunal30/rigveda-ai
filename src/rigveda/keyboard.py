@@ -20,6 +20,7 @@ KEYS = {"KEY_RIGHTCTRL": 97, "KEY_RIGHTALT": 100, "KEY_PAUSE": 119, "KEY_SCROLLL
 EVENT = struct.Struct("llHHi")  # struct input_event: time (two longs), type, code, value
 EV_KEY = 1
 HOLD = 0.25  # seconds the key must be held alone before it counts as talking
+RESCAN = 5.0  # seconds between looks for keyboards plugged (back) in
 
 
 def name(key: str) -> str:
@@ -51,9 +52,12 @@ class Keyboard(threading.Thread):
         self.code = KEYS.get(key) or int(key)
         self.held, self.released, self.log = held, released, log
 
-    def open(self) -> dict[int, Path]:
+    def open(self, already: set[Path]) -> dict[int, Path]:
+        """Open the keyboards that have the key and aren't open yet."""
         opened = {}
         for path in keyboards(self.code):
+            if path in already:
+                continue
             try:
                 opened[os.open(path, os.O_RDONLY | os.O_NONBLOCK)] = path
             except OSError:
@@ -64,17 +68,21 @@ class Keyboard(threading.Thread):
         down_at: float | None = None  # when the key went down, while it's down
         other = holding = warned = False
         devices: dict[int, Path] = {}
+        scanned = 0.0
         while True:
+            # Look again every few seconds: a keyboard that's replugged comes back as a new device, and while the
+            # mouse (which also reports a Right Ctrl key) stays open, "no devices left" never happens.
+            if time.monotonic() - scanned >= RESCAN:
+                devices |= self.open(set(devices.values()))
+                scanned = time.monotonic()
             if not devices:
-                devices = self.open()
-                if not devices:
-                    if not warned:
-                        self.log("Hold-to-talk can't read the keyboard: add yourself to the input group "
-                                 "(sudo usermod -aG input $USER), then log out and back in. Super+R still works.")
-                        warned = True
-                    time.sleep(10)  # a keyboard plugged in, or the permission granted, is noticed in time
-                    continue
-            wait = None if down_at is None or holding else max(0.0, down_at + HOLD - time.monotonic())
+                if not warned:
+                    self.log("Hold-to-talk can't read the keyboard: add yourself to the input group "
+                             "(sudo usermod -aG input $USER), then log out and back in. Super+R still works.")
+                    warned = True
+                time.sleep(RESCAN)  # a keyboard plugged in, or the permission granted, is noticed in time
+                continue
+            wait = RESCAN if down_at is None or holding else min(RESCAN, max(0.0, down_at + HOLD - time.monotonic()))
             ready, _, _ = select.select(list(devices), [], [], wait)
             if down_at is not None and not holding and not other and time.monotonic() - down_at >= HOLD:
                 holding = True
@@ -101,3 +109,69 @@ class Keyboard(threading.Thread):
                         if holding:
                             self.released()
                             holding = False
+
+
+SPACE = 57  # what Claude Code's dictation is held on
+DICTATING = 0.35  # seconds Space must be held to be dictation rather than typing
+
+
+class Holds(threading.Thread):
+    """When a key (Space) has been held down rather than tapped, so speech said meanwhile, which is for Claude Code's
+    dictation, isn't taken as said to Rigved. Like `Keyboard`, it looks at that one key code and keeps nothing else:
+    only when it went down and came up, for the last minute."""
+
+    KEEP = 60.0  # seconds of holds remembered
+
+    def __init__(self, code: int = SPACE, longer: float = DICTATING) -> None:
+        super().__init__(daemon=True, name="holds")
+        self.code, self.longer = code, longer
+        self.down: float | None = None  # when the key went down, while it's down
+        self.holds: list[tuple[float, float]] = []  # (down, up), long enough to count
+        self.lock = threading.Lock()
+
+    def during(self, start: float, end: float, margin: float = 1.0) -> bool:
+        """Whether the key was held at any time from `start` to `end` (time.monotonic()), give or take `margin`:
+        you may start talking just before pressing it, or finish just after letting go."""
+        now = time.monotonic()
+        with self.lock:
+            spans = list(self.holds)
+            if self.down is not None and now - self.down >= self.longer:
+                spans.append((self.down, now))
+        return any(down - margin <= end and up + margin >= start for down, up in spans)
+
+    def pressed(self, value: int, now: float) -> None:
+        with self.lock:
+            if value == 1:
+                self.down = now
+            elif value == 0 and self.down is not None:
+                if now - self.down >= self.longer:
+                    self.holds = [hold for hold in self.holds if hold[1] > now - self.KEEP] + [(self.down, now)]
+                self.down = None
+
+    def run(self) -> None:
+        devices: dict[int, Path] = {}
+        scanned = 0.0
+        while True:
+            if time.monotonic() - scanned >= RESCAN:
+                for path in keyboards(self.code):
+                    if path not in devices.values():
+                        try:
+                            devices[os.open(path, os.O_RDONLY | os.O_NONBLOCK)] = path
+                        except OSError:
+                            pass
+                scanned = time.monotonic()
+            if not devices:
+                time.sleep(RESCAN)
+                continue
+            ready, _, _ = select.select(list(devices), [], [], RESCAN)
+            for descriptor in ready:
+                try:
+                    data = os.read(descriptor, EVENT.size * 64)
+                except OSError:
+                    os.close(descriptor)
+                    devices.pop(descriptor)
+                    continue
+                for offset in range(0, len(data) - EVENT.size + 1, EVENT.size):
+                    _, _, kind, code, value = EVENT.unpack_from(data, offset)
+                    if kind == EV_KEY and code == self.code and value in (0, 1):
+                        self.pressed(value, time.monotonic())
