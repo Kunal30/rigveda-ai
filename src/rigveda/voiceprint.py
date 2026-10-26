@@ -38,7 +38,7 @@ CLIPS = DIR / "clips"  # what was heard, to train and measure on: you/ (the talk
 # hands-free, not yet labelled, its score in the name); you agreed to it on 2026-10-25
 KEEP_CLIPS = 2000  # of each kind, the latest
 TRAINED = DIR / "my-voice-model.npz"  # you against everything else, from `rigveda listen --train`
-MATCH = 0.5  # with a trained model, its probability that it's you; before, how close (cosine, -1 to 1) speech must be to your fingerprint to count as you: on 2026-10-25 a film scored up to 0.42, you 0.51 to 0.88
+MATCH = 0.45  # lowered from 0.5 on 2026-10-25 so softer commands count, still above Rigved's own voice through the TV (0.44); with a trained model, its probability that it's you; before, how close (cosine, -1 to 1) speech must be to your fingerprint to count as you: on 2026-10-25 a film scored up to 0.42, you 0.51 to 0.88
 
 
 class Voiceprint:

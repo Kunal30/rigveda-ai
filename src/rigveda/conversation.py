@@ -58,9 +58,12 @@ def recent() -> list[dict]:
     return turns
 
 
-def add(you: str, rigved: str, source: str, opened: dict | None = None) -> None:
-    """Remember an exchange. `opened` is what it opened ({"kind", "name", "thing"}), for "open it" later."""
+def add(you: str, rigved: str, source: str, opened: dict | None = None, private: bool = False) -> None:
+    """Remember an exchange. `opened` is what it opened ({"kind", "name", "thing"}), for "open it" later; `private`,
+    that it was answered from your files, so it's never sent off this computer."""
     turn = {"at": time.time(), "you": you[:LONGEST], "rigved": rigved[:LONGEST], "from": source}
+    if private:
+        turn["private"] = True
     if opened:
         turn["opened"] = opened
     _update(lambda turns: (turns + [turn])[-TURNS:])
@@ -86,9 +89,12 @@ def messages() -> list[dict]:
     return said
 
 
-def transcript(turns: list[dict] | None = None) -> str:
-    """The conversation as lines a model can read, or "" when there is none."""
+def transcript(turns: list[dict] | None = None, public: bool = False) -> str:
+    """The conversation as lines a model can read, or "" when there is none; with `public`, for Claude, without the
+    turns answered from your files."""
     turns = recent() if turns is None else turns
+    if public:
+        turns = [turn for turn in turns if not turn.get("private") and turn.get("from") != "chat"]
     return "\n".join(f"User: {turn['you']}\nRigved: {turn['rigved']}" for turn in turns)
 
 

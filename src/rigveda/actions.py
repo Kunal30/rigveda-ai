@@ -195,9 +195,9 @@ MODEL_FORMAT = {
 MODEL_PROMPT = """You turn a spoken command for a desktop assistant into steps. Actions:
 open: open an app, folder, website or file by name (target: the name, e.g. "chrome", "downloads", "fidelity")
 find: find a file by what it is about and open it (target: a description, e.g. "2025 tax return")
-search: search the web (target: the query)
+search: open a web search in the browser, only when the user says to search, google or look something up (target: the query)
 ask: a question that can only be answered from the user's own documents or accounts, e.g. their lease, taxes, passport, bills or pay (target: the question)
-talk: conversation, opinions, chit-chat, plans, advice or general knowledge such as weather, travel, facts, films or how-to, even about the user's own plans (target: what was said). When unsure between ask and talk, choose talk
+talk: conversation, opinions, chit-chat, plans, advice or general knowledge such as news, current events, scores, weather, travel, facts, films or how-to, even about the user's own plans (target: what was said). When unsure between ask and talk, choose talk
 time, date: say the current time or date (target: "")
 volume: target "up", "down", "mute", "unmute" or a number 0-100
 media: target "play", "pause", "next" or "previous"
@@ -226,7 +226,15 @@ def understand(command: str, config: Config) -> list[Step]:
         steps = [Step(str(step.get("action", "")), str(step.get("target", "")).strip()) for step in json.loads(reply)["steps"]]
     except (llm.OllamaError, ValueError, KeyError, TypeError, AttributeError):
         return [Step("talk", command)]
+    if any(step.kind in ("time", "date") for step in steps) and re.search(ELSEWHERE, command.lower()):
+        return [Step("talk", command)]  # "what time is it in London" isn't the time here: Claude knows
+    if config.claude_model and not re.search(ASKED_TO_SEARCH, command.lower()):  # "the worst news in London today"
+        steps = [Step("talk", command) if step.kind == "search" else step for step in steps]  # Claude looks it up
     return [step for step in steps if step.kind in KINDS] or [Step("unknown", command)]
+
+
+ASKED_TO_SEARCH = r"\b(?:search|google|look (?:it |that )?up|browser)\b"
+ELSEWHERE = r"\b(?:in|at|utc|gmt|zone|timezone|until|since|ago|from now)\b"
 
 
 def quick(text: str) -> bool:
@@ -241,8 +249,9 @@ Rigved itself, or about their work), talking on calls, talking to people in the 
 this was said TO Rigved, expecting Rigved to do or answer it.
 
 Said to Rigved: a command for the computer (open, play, pause, volume, find a file), a question Rigved could answer \
-for them (weather, facts, explanations, the time, their own files), a request (tell me a joke), or a reply to what \
-Rigved just said.
+for them (weather, facts, explanations, the time, their own files), a request (tell me a joke), a reply to what \
+Rigved just said, or anything said directly to "you" (are you listening to me, I'm going for a walk, see you later). \
+Dictation to other AIs is already filtered out, so when unsure between a request and thinking aloud, choose true.
 Not said to Rigved: talk ABOUT Rigved or "it" (is it listening, it's not responsive, how many clips are done), \
 feedback or instructions about building or fixing software, work discussion (incidents, jobs, datasets, models, \
 code), greetings or chat with other people, fragments, and thinking aloud.
@@ -252,6 +261,8 @@ Examples:
 "open my downloads folder" -> true
 "why do cats purr" -> true
 "is it listening right now" -> false
+"are you even listening to me" -> true
+"I'm going for a walk, back soon" -> true
 "it still waits fifteen seconds, it's not snappy" -> false
 "we need to rerun the dataflow job on all datasets" -> false
 "hey, how are you doing" -> false
@@ -263,7 +274,7 @@ Conversation with Rigved so far:
 They just said: {said}
 
 Reply with JSON only."""
-# Tried on 22 things you said on 2026-10-25 (requests, and dictation to Claude): 21 right with qwen3:14b, 0.17 s each.
+# Tried on things you said on 2026-10-25 (requests, and dictation to Claude): see tests in the session notes.
 ADDRESSED_FORMAT = {"type": "object", "properties": {"for_rigved": {"type": "boolean"}}, "required": ["for_rigved"]}
 
 
@@ -485,13 +496,53 @@ def _by(sign: str, amount: str | None) -> str:
     return "up" if sign == "+" else "down"
 
 
-def volume(what: str) -> None:
+def volume(what: str) -> bool:
+    """Turn the apps playing sound (VLC, the browser) up, down, mute or to a level; False if there are none. The
+    speakers stay at 100% so Rigved is always heard in full: a level they were turned down to moves into the apps."""
+    what = what.strip().rstrip("%").strip()  # "15%", as the model sometimes gives it
+    apps = sounding()
+    _speakers_full(apps)
+    for app in apps:
+        command = {"up": ["set-volume", "-l", "1.0", app, "10%+"], "down": ["set-volume", app, "10%-"],
+                   "mute": ["set-mute", app, "1"], "unmute": ["set-mute", app, "0"]}.get(what)
+        if what[:1] in "+-" and what[1:].isdigit():
+            command = ["set-volume", "-l", "1.0", app, f"{what[1:]}%{what[0]}"]
+        subprocess.run(["wpctl", *(command or ["set-volume", app, f"{int(what)}%"])], capture_output=True, timeout=5)
+    return bool(apps)
+
+
+def sounding() -> list[str]:
+    """The PipeWire ids of the apps' sound streams, playing or paused; never Rigved's own voice (python, through
+    PipeWire's ALSA plugin)."""
+    try:
+        nodes = json.loads(subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=3).stdout or "[]")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return []
+    found = []
+    for node in nodes:
+        props = (node.get("info") or {}).get("props") or {}
+        app = props.get("application.name") or props.get("node.name") or ""
+        if props.get("media.class") == "Stream/Output/Audio" and "python" not in app.lower():
+            found.append(str(node["id"]))
+    return found
+
+
+def _level(target: str) -> float | None:
+    found = subprocess.run(["wpctl", "get-volume", target], capture_output=True, text=True, timeout=5).stdout
+    match = re.search(r"Volume: ([\d.]+)", found)
+    return float(match.group(1)) if match else None
+
+
+def _speakers_full(apps: list[str]) -> None:
+    """Put the speakers back to 100%, turning each app down to match so it sounds as loud as it did."""
     sink = "@DEFAULT_AUDIO_SINK@"
-    command = {"up": ["set-volume", "-l", "1.0", sink, "10%+"], "down": ["set-volume", sink, "10%-"],
-               "mute": ["set-mute", sink, "1"], "unmute": ["set-mute", sink, "0"]}.get(what)
-    if what[:1] in "+-" and what[1:].isdigit():
-        command = ["set-volume", "-l", "1.0", sink, f"{what[1:]}%{what[0]}"]
-    subprocess.run(["wpctl", *(command or ["set-volume", sink, f"{int(what)}%"])], capture_output=True, timeout=5)
+    speakers = _level(sink)
+    if speakers is None or speakers >= 1.0:
+        return
+    for app in apps:
+        if (level := _level(app)) is not None:
+            subprocess.run(["wpctl", "set-volume", app, f"{level * speakers:.3f}"], capture_output=True, timeout=5)
+    subprocess.run(["wpctl", "set-volume", sink, "1.0"], capture_output=True, timeout=5)
 
 
 # ── who's talking ──
@@ -507,6 +558,7 @@ PERSONAS = {
                   "Go ahead, make it interesting."],
         "done": ["Done.", "Consider it handled.", "Easy."],
         "unsure": ["Didn't catch that. Run it by me again?", "Missed that one. Again, maybe slower?"],
+        "cant": ["That one's beyond me for now. Give me a few upgrades.", "Can't do that yet. Soon, though."],
         "bye": ["Fine. I'll be here, being brilliant.", "Going quiet. Call me when you need a genius."],
         "broke": "Something broke. Not my fault, probably.",
         "folder": "{name}, open. Try not to judge the clutter.", "app": "{name}, up and running.",
@@ -516,6 +568,7 @@ PERSONAS = {
         "search": "Asking the internet about {target}. Brace yourself.",
         "web": ["Looking that up.", "One sec, checking the internet.", "Let me look into that."],
         "no music": "Nothing's playing. I can't pause silence.",
+        "no sound": "Nothing's making any sound to turn. I'm always at full volume.",
         "no answer": "Your files have nothing on that. Shocking, I know.",
         "time": "It's {time}.", "date": "It's {date}.",
         "fresh": ["Wiped. Clean slate.", "Forgotten. What's next?"],
@@ -528,6 +581,7 @@ PERSONAS = {
         "greet": ["Yes, my child. I am listening.", "Speak, and I shall listen.", "Haan, beta. What do you seek?",
                   "I am here. Tell me what you need."],
         "done": ["Tathaastu.", "So be it.", "It is done."],
+        "cant": ["That is not yet within my power, my child."],
         "unsure": ["Forgive me, my child. Those words escape me. Say them once more.",
                    "The meaning eludes me, beta. Speak it again, a little differently."],
         "bye": ["Very well. I shall rest, but never far.", "As you wish. Call, and I will be here."],
@@ -539,6 +593,7 @@ PERSONAS = {
         "search": "I have asked the wide world about {target}.",
         "web": ["Let me consult the wide world, my child.", "A moment. I shall seek this out."],
         "no music": "No music plays that I could guide.",
+        "no sound": "No sound flows that I could soften or raise, my child.",
         "no answer": "My child, your writings are silent on this.",
         "time": "The hour is {time}.", "date": "Today is {date}.",
         "fresh": ["It is forgotten. We begin anew.", "Like footprints in the tide, it is gone."],
@@ -581,15 +636,21 @@ def answer(question: str, config: Config) -> str:
                                 "don't cover, answer it anyway, briefly.\n\n" + context + "\n\nQUESTION: " + question)
 
 
-def talk(said: str, config: Config, log=print, searching=lambda: None) -> str:
+def talk(said: str, config: Config, log=print, searching=lambda: None, private: list | None = None) -> str:
     """A reply in character: from Claude when it's set up (see claude.py), else, or if Claude can't be had, locally.
-    Claude hands back what only your files can answer, and they're searched here."""
+    Claude hands back what only your files can answer, and they're searched here (and `private` is told). Claude
+    hears the conversation without the turns answered from your files."""
     if config.claude_model:
         from . import claude
 
         try:
-            reply = claude.reply(said, conversation.transcript(), persona(config)["about"], config.claude_model, searching)
-            return answer(said, config) if reply == claude.FILES else reply
+            reply = claude.reply(said, conversation.transcript(public=True), persona(config)["about"], config.claude_model,
+                                 searching)
+            if reply != claude.FILES:
+                return reply
+            if private is not None:
+                private.append(True)
+            return answer(said, config)
         except claude.ClaudeError as error:
             log(f"Claude couldn't answer ({error}); answering locally.")
     return spoken_reply(config, "They said: " + said)
@@ -616,9 +677,10 @@ def spoken_name(name: str) -> str:
 
 
 def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = False, opened: list[dict] | None = None,
-              searching=lambda: None) -> str:
+              searching=lambda: None, private: list | None = None) -> str:
     """Do each step and return what Rigved says about it all. What it opens is added to `opened`, for "open it" later;
-    `searching` is told when an answer has to wait on the web."""
+    `searching` is told when an answer has to wait on the web, `private` when one came from your files."""
+    private = [] if private is None else private
     opened = [] if opened is None else opened
     said: list[str] = []
     done = failed = False
@@ -626,7 +688,9 @@ def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = Fals
     for step in steps:
         if step.kind == "stop":
             return line(config, "bye")
-        if step.kind == "unknown" or (not step.target and step.kind in ("open", "find", "search", "ask", "talk", "volume", "media")):
+        if step.kind == "unknown" and meaningful(step.target) and len(words(step.target)) > 1:
+            said.append(line(config, "cant"))  # heard it fine; it's something Rigved can't do yet ("reboot the system")
+        elif step.kind == "unknown" or (not step.target and step.kind in ("open", "find", "search", "ask", "talk", "volume", "media")):
             said.append(line(config, "unsure"))
         elif step.kind == "time":
             now = datetime.datetime.now()
@@ -680,12 +744,15 @@ def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = Fals
             done = True
             said.append(line(config, "search", target=step.target))
         elif step.kind == "ask" and (not config.claude_model or personal(step.target)):
+            private.append(True)
             said.append(answer(step.target, config) if not dry_run else "(an answer from your files)")
         elif step.kind in ("ask", "talk"):  # a question about the world rather than you goes to Claude, when it's set up
-            said.append(talk(step.target, config, log, searching) if not dry_run else "(a reply in character)")
+            said.append(talk(step.target, config, log, searching, private) if not dry_run else "(a reply in character)")
         elif step.kind == "volume":
-            if not dry_run:
-                volume(step.target)
+            if not dry_run and not volume(step.target):
+                said.append(line(config, "no sound"))
+                failed = True
+                continue
             done = True
         elif step.kind == "media":
             if not dry_run and not media(step.target):

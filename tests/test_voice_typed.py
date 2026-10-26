@@ -24,6 +24,7 @@ def listener(tmp_path, monkeypatch, config):
     monkeypatch.setattr(voice.Mouth, "blip", staticmethod(lambda rising=True: None))  # no tones from the speakers
     monkeypatch.setattr(actions, "addressed", lambda said, config: "honey" not in said)  # no model asked
     monkeypatch.setattr(voice, "recording", lambda: [])  # never the real PipeWire
+    monkeypatch.setattr(voice, "audible", lambda: True)  # as if a film were on: the strict MATCH
     heard = voice.Listener.__new__(voice.Listener)
     heard.config, heard.log, heard.shown = config, lambda message: None, ("", 0.0, 0.0)
     heard.interrupted = False
@@ -168,6 +169,38 @@ def test_other_voices_are_passed_over_and_yours_needs_no_name_to_pause(listener,
     assert answered == ["open downloads", "pause"]  # with the name needed, the longer request without it isn't taken
 
 
+def test_a_soft_short_command_counts_when_nothing_is_playing(listener, monkeypatch) -> None:
+    said = ["play the movie", "play the movie"]
+    sounding = iter([True, False])  # the film playing, then paused
+    monkeypatch.setattr(voice, "audible", lambda: next(sounding))
+    monkeypatch.setattr(voice, "Ears", lambda **options: FakeEars(Speech(text) for text in said))
+    listener.busy, listener.done = threading.Lock(), 0.0
+    listener.score = lambda audio: 0.32  # a second of you, said softly
+    listener.command = lambda audio, yours=False: (str(audio), actions.wake(audio))
+    answered = []
+    listener.respond = lambda command, ears=None: answered.append(command) or ["media play"]
+    with pytest.raises(Done):
+        listener.listen_for_name()
+    assert answered == ["play the movie"]  # while the film played it might have been the film
+
+
+def test_audible_counts_only_running_output_streams(monkeypatch) -> None:
+    import json
+    import subprocess
+
+    def node(kind, app, state):
+        return {"info": {"state": state, "props": {"media.class": f"Stream/{kind}/Audio", "application.name": app}}}
+
+    nodes = [node("Output", "VLC media player", "idle"), node("Output", "PipeWire ALSA [python3.14]", "idle"),
+             node("Input", "PipeWire ALSA [python3.14]", "running"), node("Input", "Zoom", "running")]
+    monkeypatch.setattr(subprocess, "run", lambda *args, **options: subprocess.CompletedProcess(args, 0, json.dumps(nodes)))
+    assert voice.audible() is False and voice.recording() == ["Zoom"]  # a paused film; Rigved's own microphone left out
+    nodes[1]["info"]["state"] = "running"
+    assert voice.audible() is True  # Rigved talking
+    nodes[1]["info"]["state"], nodes[0]["info"]["state"] = "idle", "running"
+    assert voice.audible() is True  # the film
+
+
 def test_without_the_name_anything_in_your_voice_said_to_rigved_is_taken(listener, monkeypatch) -> None:
     from rigveda import keyboard
 
@@ -181,7 +214,7 @@ def test_without_the_name_anything_in_your_voice_said_to_rigved_is_taken(listene
     listener.holds = keyboard.Holds()
     calls = iter([None, None, "space", None])  # asked only of what was in your voice
     real = listener.holds.during
-    listener.holds.during = lambda start, end: next(calls) == "space"  # Space held during the fourth
+    listener.holds.during = lambda start, end, margin=1.0: margin and next(calls) == "space"  # Space held during the fourth
     recording = iter([[], [], ["Zoom"]])  # a meeting during the fifth (Space was held during the fourth)
     monkeypatch.setattr(voice, "recording", lambda: next(recording))
     answered = []
@@ -354,3 +387,24 @@ def test_muting_closes_the_microphone_until_unmuted(listener, monkeypatch, tmp_p
     listener.listen_for_name()  # returns at once: the microphone closes
     assert opened == [1]
     assert voice.mute(False) is False and not voice.muted()
+
+
+def test_speech_while_space_is_held_is_kept_as_yours_to_train_on(listener) -> None:
+    kept = []
+
+    class Voiceprint:
+        def heard(self, audio, kind, score=None):
+            kept.append(kind)
+
+    class Holds:
+        def __init__(self, held):
+            self.held = held
+
+        def during(self, start, end, margin=1.0):
+            return self.held
+
+    listener.voiceprint = Voiceprint()
+    for held in (True, False):
+        listener.holds = Holds(held)
+        listener.keep(np.zeros(voice.RATE, dtype=np.float32), 0.9)
+    assert kept == ["you", "heard"]
