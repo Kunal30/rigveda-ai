@@ -64,6 +64,18 @@ def test_archives_read_every_member_by_its_type(tmp_path, config) -> None:
     assert texts(tar, config) == [("a/b.txt", "tarred words")]
 
 
+def test_archives_skip_libraries_bundled_into_java_builds(tmp_path, config) -> None:
+    library = io.BytesIO()
+    with zipfile.ZipFile(library, "w") as nested:
+        nested.writestr("models/s3.json", "aws service model")
+    path = tmp_path / "app.jar"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("BOOT-INF/classes/application.properties", "billing.account=rent")
+        archive.writestr("BOOT-INF/lib/aws-java-sdk-s3.jar", library.getvalue())
+        archive.writestr("WEB-INF/lib/notes.txt", "vendor readme")
+    assert texts(path, config) == [("BOOT-INF/classes/application.properties", "billing.account=rent")]
+
+
 def test_archives_inside_archives_stop_at_two_levels(tmp_path, config) -> None:
     payload = b""
     for level in range(4):

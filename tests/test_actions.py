@@ -18,8 +18,23 @@ from rigveda.config import Config
     ("I was reading the Rigveda", None),
     ("Hey, Rick Fed, open Chrome", None),
     ("", None),
+    ("What time is it, Rigved?", "what time is it"),
+    ("Hey Ved, pause the movie.", "pause the movie"),
+    ("Turn it up, Ved.", "turn it up"),
+    ("The Vedas are old.", None),
+    ("Hey Ved.", ""),
+    ("Ved.", None),
+    ("Ved, open downloads", "open downloads"),
+    ("Thank you for listening to me, Rigved. Hey Rigved.", "thank you for listening to me rigved"),
+    ("Can you pause the movie? Rigved.", "can you pause the movie"),
+    ("That's the Rigveda, an ancient text.", None),
+    ("I told my wife, Rigved is great", None),
+    ("Play. Hey Rigved. Hey Rigved. Play the movie.", "play the movie"),
+    ("That is good. Rigved, what time is it?", "what time is it"),
+    ("I told my wife. Wait. Ved is fine.", None),
+    ("I was reading. The Rigveda is old.", None),
 ])
-def test_wake_word_must_come_first(heard: str, command: str | None) -> None:
+def test_wake_word_must_come_first_or_last(heard: str, command: str | None) -> None:
     assert actions.wake(heard) == command
 
 
@@ -30,7 +45,15 @@ def test_wake_word_must_come_first(heard: str, command: str | None) -> None:
     ("turn it up", [Step("volume", "up")]),
     ("set volume to forty", [Step("volume", "40")]),
     ("volume 150", [Step("volume", "100")]),
+    ("increased the volume by 50", [Step("volume", "+50")]),
+    ("turn it down by twenty percent", [Step("volume", "-20")]),
+    ("raise the volume", [Step("volume", "up")]),
     ("pause the music then open terminal", [Step("media", "pause"), Step("open", "terminal")]),
+    ("resume the play in the vlc media player", [Step("media", "play")]),
+    ("play the vlc media player movie", [Step("media", "play")]),
+    ("pause vlc", [Step("media", "pause")]),
+    ("stop the movie in vlc", [Step("media", "pause")]),
+    ("open vlc", [Step("open", "vlc")]),
     ("what's the time", [Step("time")]),
     ("search for weather in san jose", [Step("search", "weather in san jose")]),
     ("find my passport", [Step("find", "passport")]),
@@ -155,3 +178,12 @@ def test_find_never_plays_a_film_it_only_found_by_its_words(desktop: Path, monke
         "Found it: Killers Of The Flower Moon 2023."
     monkeypatch.setattr(actions, "find_file", lambda description, config: "/docs/lease.pdf")
     assert actions.carry_out([Step("find", "apartment details")], Config(), log=quiet, dry_run=True) == "Found it: lease."
+
+
+def test_media_commands_are_done_quietly_and_any_wording_works(monkeypatch: pytest.MonkeyPatch) -> None:
+    pressed = []
+    monkeypatch.setattr(actions, "players", lambda: ["org.mpris.MediaPlayer2.vlc"])
+    monkeypatch.setattr(actions.subprocess, "run", lambda command, **options: pressed.append(command[-1]))
+    assert actions.carry_out([Step("media", "resume")], Config(), log=lambda message: None) == ""
+    assert actions.carry_out([Step("media", "whatever")], Config(), log=lambda message: None) == ""
+    assert pressed == ["org.mpris.MediaPlayer2.Player.Play", "org.mpris.MediaPlayer2.Player.PlayPause"]

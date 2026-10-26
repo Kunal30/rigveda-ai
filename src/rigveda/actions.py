@@ -22,6 +22,7 @@ from . import conversation
 from .config import Config
 
 WAKE_WORDS = ("rigved", "rigveda")
+SHORT_NAMES = {"ved", "veda"}  # "Hey Ved"; said alone it's heard as "wait" or "read", so it needs the "hey"
 FILLERS = {"hey", "hi", "hello", "ok", "okay", "oh", "o", "ah", "uh", "um", "hmm", "namaste", "so", "yo"}
 VERBS = (r"(?:please\s+)?(?:open|launch|start|run|show(?:\s+me)?|go\s+to|bring\s+up|pause|play|resume|find|search|"
          r"google(?!\s+(?:chrome|drive|maps|docs|calendar|photos|music)))")
@@ -69,17 +70,58 @@ def similar(a: str, b: str) -> float:
 
 
 def wake(text: str) -> str | None:
-    """What was said after the wake word ("Rigved, open Downloads" → "open downloads"), "" for the wake word alone,
-    or None when the speech didn't start with it. Whisper hears the name in different ways ("Rig Ved", "Rigvid")."""
+    """What was said to Rigved by name, or None when it wasn't: the name first ("Rigved, open Downloads" → "open
+    downloads"; "" for the name alone), or last after a pause, as you'd address a person ("What time is it, Rigved?" →
+    "what time is it"). Whisper hears the name in different ways ("Rig Ved", "Rigvid")."""
     tokens = words(text)
     start = 0
     while start < min(len(tokens), 2) and tokens[start] in FILLERS:
         start += 1
-    for size in (1, 2, 3):  # "rigved", "rig ved", "rig ve da"
-        name = "".join(tokens[start:start + size])
-        if name.startswith("r") and max(similar(name, word) for word in WAKE_WORDS) >= 0.8:
-            return " ".join(tokens[start + size:])
+    if (size := _name(tokens[start:start + 3])) is not None:
+        if start == 0 and tokens[0] in SHORT_NAMES and len(tokens) == 1:
+            return None  # "Ved." alone is too often "wait", "weed" or "wed" misheard: it takes "Hey Ved"
+        return " ".join(tokens[start + size:])
+    ending = re.fullmatch(r"(.*)[,.!?;]\s*(.+?)", text.strip().rstrip(" .!?"), re.S)  # what follows the last pause
+    if not ending:
+        return None
+    before, after = ending.groups()
+    last = [token for token in words(after) if token not in FILLERS]
+    size = _name(last)
+    if size is not None and size == len(last) and words(before):
+        return " ".join(words(before))
+    return _named_later(text)
+
+
+def _named_later(text: str) -> str | None:
+    """The request after the name when it starts a later sentence, as you'd start over: "Play. Hey Rigved. Play the
+    movie." → "play the movie". Only a full stop, question or exclamation mark counts, so "my wife, Rigved is" doesn't."""
+    sentences = [part for part in re.split(r"[.!?]+\s+", text.strip()) if words(part)]
+    for index in range(len(sentences) - 1, 0, -1):
+        tokens = words(sentences[index])
+        start = 0
+        while start < min(len(tokens), 2) and tokens[start] in FILLERS:
+            start += 1
+        if (size := _name(tokens[start:start + 3])) is None or (tokens[start] in SHORT_NAMES and start == 0):
+            continue  # a bare "Ved" mid-speech is too often "wait" or "wed"
+        rest = " ".join([" ".join(tokens[start + size:]), *(" ".join(words(part)) for part in sentences[index + 1:])])
+        return rest.strip()
     return None
+
+
+def _name(tokens: list[str]) -> int | None:
+    """How many of the first tokens make up the name ("rigved", "rig ved", "rig ve da"), or None if they don't."""
+    if tokens and tokens[0] in SHORT_NAMES:
+        return 1
+    for size in (1, 2, 3):
+        name = "".join(tokens[:size])
+        if len(tokens) >= size and name.startswith("r") and max(similar(name, word) for word in WAKE_WORDS) >= 0.8:
+            return size
+    return None
+
+
+def meaningful(text: str) -> bool:
+    """Whether there's more to it than "hey", "um" or "okay"."""
+    return any(word not in FILLERS for word in words(text))
 
 
 def parse(command: str) -> list[Step] | None:
@@ -95,8 +137,13 @@ def parse(command: str) -> list[Step] | None:
     return None if None in steps else steps
 
 
+PLAYER = r"(?:vlc(?: media player)?|the media player|media player|the player|youtube|spotify)"
+WATCHED = rf"(?:(?:the|this|my) )?(?:{PLAYER} )?(?:music|song|video|movie|film|show|episode|playback|play|it)|{PLAYER}"
+
+
 def _rule(text: str) -> Step | None:
     text = re.sub(r"^(?:please|can you|could you|would you|will you)\s+", "", text).removesuffix(" please")
+    text = re.sub(rf"^((?:pause|stop|hold|play|resume|continue|unpause)\b.*?) (?:in|on) (?:the )?{PLAYER}$", r"\1", text)
     if re.fullmatch(r"(?:stop|cancel|never ?mind|nothing|quiet|be quiet|shut up|go to sleep|that's all|thank you|thanks)", text):
         return Step("stop")
     if re.fullmatch(r"(?:forget (?:that|it|this|everything|all that|the conversation|what i said)|start over|"
@@ -106,10 +153,12 @@ def _rule(text: str) -> Step | None:
         return Step("time")
     if re.fullmatch(r"(?:what(?:'s| is) (?:the date|today's date)|what day is (?:it|today)|today's date|date)", text):
         return Step("date")
-    if re.fullmatch(r"(?:turn (?:it|the volume) up|volume up|louder|increase (?:the )?volume)", text):
-        return Step("volume", "up")
-    if re.fullmatch(r"(?:turn (?:it|the volume) down|volume down|quieter|softer|decrease (?:the )?volume|lower (?:the )?volume)", text):
-        return Step("volume", "down")
+    by = r"(?: by (\d{1,3}|[a-z ]+?)(?: percent| %)?)?"  # "turn it up by 20": Whisper often writes "increased"
+    if match := re.fullmatch(rf"(?:turn (?:it|the volume) up|volume up|louder|(?:increased?|raised?) (?:the )?volume){by}", text):
+        return Step("volume", _by("+", match.group(1)))
+    if match := re.fullmatch(rf"(?:turn (?:it|the volume) down|volume down|quieter|softer|"
+                             rf"(?:decreased?|lowered?|reduced?) (?:the )?volume){by}", text):
+        return Step("volume", _by("-", match.group(1)))
     if re.fullmatch(r"(?:mute|mute (?:it|the sound|the volume)|silence)", text):
         return Step("volume", "mute")
     if re.fullmatch(r"(?:unmute|unmute (?:it|the sound|the volume))", text):
@@ -118,9 +167,9 @@ def _rule(text: str) -> Step | None:
         level = match.group(1)
         if level.isdigit() or level in NUMBERS:
             return Step("volume", str(min(int(level) if level.isdigit() else NUMBERS[level], 100)))
-    if re.fullmatch(r"(?:pause|stop) (?:the |this )?(?:music|song|video|movie|playback|it)|pause", text):
+    if re.fullmatch(rf"(?:pause|stop|hold) (?:{WATCHED})|pause", text):  # "pause vlc", "stop the movie in vlc"
         return Step("media", "pause")
-    if re.fullmatch(r"(?:play|resume|continue|unpause)(?: (?:the |this )?(?:music|song|video|movie|playback|it))?", text):
+    if re.fullmatch(rf"(?:play|resume|continue|unpause)(?: (?:{WATCHED}))?", text):  # "resume the play in vlc"
         return Step("media", "play")
     if re.fullmatch(r"(?:next|skip)(?: (?:song|track|video|one))?|play the next (?:song|track|video|one)", text):
         return Step("media", "next")
@@ -147,8 +196,8 @@ MODEL_PROMPT = """You turn a spoken command for a desktop assistant into steps. 
 open: open an app, folder, website or file by name (target: the name, e.g. "chrome", "downloads", "fidelity")
 find: find a file by what it is about and open it (target: a description, e.g. "2025 tax return")
 search: search the web (target: the query)
-ask: a question whose answer is in the user's own documents or accounts, e.g. their lease, taxes, passport or pay (target: the question)
-talk: conversation, plans, advice or general knowledge such as weather, travel, facts or how-to, even about the user's own plans (target: what was said)
+ask: a question that can only be answered from the user's own documents or accounts, e.g. their lease, taxes, passport, bills or pay (target: the question)
+talk: conversation, opinions, chit-chat, plans, advice or general knowledge such as weather, travel, facts, films or how-to, even about the user's own plans (target: what was said). When unsure between ask and talk, choose talk
 time, date: say the current time or date (target: "")
 volume: target "up", "down", "mute", "unmute" or a number 0-100
 media: target "play", "pause", "next" or "previous"
@@ -178,6 +227,58 @@ def understand(command: str, config: Config) -> list[Step]:
     except (llm.OllamaError, ValueError, KeyError, TypeError, AttributeError):
         return [Step("talk", command)]
     return [step for step in steps if step.kind in KINDS] or [Step("unknown", command)]
+
+
+def quick(text: str) -> bool:
+    """A short command that's safe to take without the name, when it's your voice: pause, play, louder, next and such."""
+    steps = parse(text)
+    return bool(steps) and len(words(text)) <= 5 and all(step.kind in ("media", "volume") for step in steps)
+
+
+ADDRESSED_PROMPT = """Rigved is a voice assistant on the user's computer that is always listening. It hears \
+everything the user says out loud: requests to Rigved, but also the user dictating to other apps and AIs (often about \
+Rigved itself, or about their work), talking on calls, talking to people in the room, and thinking aloud. Decide if \
+this was said TO Rigved, expecting Rigved to do or answer it.
+
+Said to Rigved: a command for the computer (open, play, pause, volume, find a file), a question Rigved could answer \
+for them (weather, facts, explanations, the time, their own files), a request (tell me a joke), or a reply to what \
+Rigved just said.
+Not said to Rigved: talk ABOUT Rigved or "it" (is it listening, it's not responsive, how many clips are done), \
+feedback or instructions about building or fixing software, work discussion (incidents, jobs, datasets, models, \
+code), greetings or chat with other people, fragments, and thinking aloud.
+
+Examples:
+"what's the weather in Seattle" -> true
+"open my downloads folder" -> true
+"why do cats purr" -> true
+"is it listening right now" -> false
+"it still waits fifteen seconds, it's not snappy" -> false
+"we need to rerun the dataflow job on all datasets" -> false
+"hey, how are you doing" -> false
+"okay so" -> false
+
+Conversation with Rigved so far:
+{conversation}
+
+They just said: {said}
+
+Reply with JSON only."""
+# Tried on 22 things you said on 2026-10-25 (requests, and dictation to Claude): 21 right with qwen3:14b, 0.17 s each.
+ADDRESSED_FORMAT = {"type": "object", "properties": {"for_rigved": {"type": "boolean"}}, "required": ["for_rigved"]}
+
+
+def addressed(said: str, config: Config) -> bool:
+    """Whether something you said was said to Rigved, rather than to someone else, another app or yourself."""
+    if parse(said) is not None:  # a plain command: "pause", "open downloads"
+        return True
+    from . import llm
+
+    prompt = ADDRESSED_PROMPT.format(conversation=conversation.transcript() or "(nothing yet)", said=said)
+    try:
+        reply = llm.quick(config.ollama, config.model, prompt, timeout=20, format=ADDRESSED_FORMAT, options={"temperature": 0})
+        return bool(json.loads(reply)["for_rigved"])
+    except (llm.OllamaError, ValueError, KeyError, TypeError):
+        return True  # can't tell: better to answer than to ignore you
 
 
 def leans(target: str) -> bool:
@@ -254,9 +355,9 @@ def best(target: str, candidates: dict[str, object]) -> tuple[float, str, object
                key=lambda found: found[0])
 
 
-def resolve(target: str, config: Config) -> tuple[str, str, str]:
-    """(kind, display name, what to open) for a spoken name: a folder, an app, a website or a file in the index.
-    kind is "" when nothing matches."""
+def resolve(target: str, config: Config, files: bool = True) -> tuple[str, str, str]:
+    """(kind, display name, what to open) for a spoken name: a folder, an app, a website or, with `files`, a file in
+    the index (which takes seconds). kind is "" when nothing matches."""
     target = " ".join(words(target))
     wants_folder = bool(re.search(r"\b(?:folder|directory)$", target))
     target = re.sub(r"\s+(?:in|on|with|using) (?:google chrome|chrome|the browser|my browser|firefox)\b.*$", "", target)
@@ -275,6 +376,8 @@ def resolve(target: str, config: Config) -> tuple[str, str, str]:
             name, thing = thing
         label = {"folder": Path(thing).name, "website": name.title() if name.islower() else name}.get(kind, name)
         return kind, label, str(thing)
+    if not files:
+        return "", target, ""
     found = find_file(target, config)
     if found and named(target, found):  # "open" mustn't play a film because its subtitles mentioned music
         return "file", Path(found).name, found
@@ -321,7 +424,7 @@ def open_thing(kind: str, thing: str) -> None:
 
 
 def players() -> list[str]:
-    """Media players that can be controlled (MPRIS), the one playing first."""
+    """Media players that can be controlled (MPRIS): the one playing first, then a paused one."""
     try:
         names = subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path",
                                 "/org/freedesktop/DBus", "--method", "org.freedesktop.DBus.ListNames"],
@@ -330,29 +433,64 @@ def players() -> list[str]:
         return []
     found = re.findall(r"'(org\.mpris\.MediaPlayer2\.[^']+)'", names)
 
-    def playing(name: str) -> bool:
-        status = subprocess.run(["gdbus", "call", "--session", "--dest", name, "--object-path", "/org/mpris/MediaPlayer2",
-                                 "--method", "org.freedesktop.DBus.Properties.Get", "org.mpris.MediaPlayer2.Player",
-                                 "PlaybackStatus"], capture_output=True, text=True, timeout=5).stdout
-        return "Playing" in status
+    def rank(name: str) -> int:
+        status = _status(name)
+        return 0 if "Playing" in status else 1 if "Paused" in status else 2
 
-    return sorted(found, key=lambda name: not playing(name))
+    return sorted(found, key=rank)
+
+
+def playing() -> list[str]:
+    """The media players playing right now."""
+    return [name for name in players() if _status(name) == "Playing"]
+
+
+def _status(name: str) -> str:
+    try:
+        return subprocess.run(["gdbus", "call", "--session", "--dest", name, "--object-path", "/org/mpris/MediaPlayer2",
+                               "--method", "org.freedesktop.DBus.Properties.Get", "org.mpris.MediaPlayer2.Player",
+                               "PlaybackStatus"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def press(player: str, method: str) -> None:
+    """Press a media player's button: Play, Pause, PlayPause, Next or Previous."""
+    try:
+        subprocess.run(["gdbus", "call", "--session", "--dest", player, "--object-path", "/org/mpris/MediaPlayer2",
+                        "--method", f"org.mpris.MediaPlayer2.Player.{method}"], capture_output=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+# What the model may call each media action; anything else toggles between playing and paused.
+MEDIA_METHODS = {"play": "Play", "resume": "Play", "continue": "Play", "unpause": "Play", "start": "Play",
+                 "pause": "Pause", "stop": "Pause", "hold": "Pause", "next": "Next", "skip": "Next",
+                 "previous": "Previous", "back": "Previous"}
 
 
 def media(what: str) -> bool:
-    method = {"play": "Play", "pause": "Pause", "next": "Next", "previous": "Previous"}[what]
+    method = MEDIA_METHODS.get(what.split()[0] if what else "", "PlayPause")
     found = players()
     if not found:
         return False
-    subprocess.run(["gdbus", "call", "--session", "--dest", found[0], "--object-path", "/org/mpris/MediaPlayer2",
-                    "--method", f"org.mpris.MediaPlayer2.Player.{method}"], capture_output=True, timeout=5)
+    press(found[0], method)
     return True
+
+
+def _by(sign: str, amount: str | None) -> str:
+    """ "up" or "down" by the usual step, or "+20" / "-20" when you said how much."""
+    if amount and (amount.isdigit() or amount in NUMBERS):
+        return sign + str(min(int(amount) if amount.isdigit() else NUMBERS[amount], 100))
+    return "up" if sign == "+" else "down"
 
 
 def volume(what: str) -> None:
     sink = "@DEFAULT_AUDIO_SINK@"
     command = {"up": ["set-volume", "-l", "1.0", sink, "10%+"], "down": ["set-volume", sink, "10%-"],
                "mute": ["set-mute", sink, "1"], "unmute": ["set-mute", sink, "0"]}.get(what)
+    if what[:1] in "+-" and what[1:].isdigit():
+        command = ["set-volume", "-l", "1.0", sink, f"{what[1:]}%{what[0]}"]
     subprocess.run(["wpctl", *(command or ["set-volume", sink, f"{int(what)}%"])], capture_output=True, timeout=5)
 
 
@@ -364,6 +502,7 @@ PERSONAS = {
         "about": "a quick-witted, supremely confident genius with dry humour and playful sarcasm, like a brilliant "
                  "inventor's AI sidekick: warm underneath, never mean",
         "speed": 1.05,
+        "looking": ["Let me dig through your files.", "Checking your files, one sec.", "Give me a second to look."],
         "greet": ["Talk to me.", "I'm all ears. Well, all microphone.", "Yeah? What are we building today?",
                   "Go ahead, make it interesting."],
         "done": ["Done.", "Consider it handled.", "Easy."],
@@ -375,6 +514,7 @@ PERSONAS = {
         "missing": "I looked everywhere. No {target}. Are we sure that exists?",
         "no file": "Went through every file you own. No sign of {target}.",
         "search": "Asking the internet about {target}. Brace yourself.",
+        "web": ["Looking that up.", "One sec, checking the internet.", "Let me look into that."],
         "no music": "Nothing's playing. I can't pause silence.",
         "no answer": "Your files have nothing on that. Shocking, I know.",
         "time": "It's {time}.", "date": "It's {date}.",
@@ -384,6 +524,7 @@ PERSONAS = {
         "about": "a wise and gentle Indian sage who speaks calmly, warmly and simply, sometimes with an image from "
                  "nature or an old teaching, and now and then calls the listener \"my child\" or \"beta\"",
         "speed": 0.88,
+        "looking": ["Let me look through your scrolls, my child.", "A moment. I shall search your records."],
         "greet": ["Yes, my child. I am listening.", "Speak, and I shall listen.", "Haan, beta. What do you seek?",
                   "I am here. Tell me what you need."],
         "done": ["Tathaastu.", "So be it.", "It is done."],
@@ -396,6 +537,7 @@ PERSONAS = {
         "missing": "I searched far and wide, but found nothing called {target}.",
         "no file": "I looked through all your writings, but {target} is not among them.",
         "search": "I have asked the wide world about {target}.",
+        "web": ["Let me consult the wide world, my child.", "A moment. I shall seek this out."],
         "no music": "No music plays that I could guide.",
         "no answer": "My child, your writings are silent on this.",
         "time": "The hour is {time}.", "date": "Today is {date}.",
@@ -439,8 +581,27 @@ def answer(question: str, config: Config) -> str:
                                 "don't cover, answer it anyway, briefly.\n\n" + context + "\n\nQUESTION: " + question)
 
 
-def talk(said: str, config: Config) -> str:
+def talk(said: str, config: Config, log=print, searching=lambda: None) -> str:
+    """A reply in character: from Claude when it's set up (see claude.py), else, or if Claude can't be had, locally.
+    Claude hands back what only your files can answer, and they're searched here."""
+    if config.claude_model:
+        from . import claude
+
+        try:
+            reply = claude.reply(said, conversation.transcript(), persona(config)["about"], config.claude_model, searching)
+            return answer(said, config) if reply == claude.FILES else reply
+        except claude.ClaudeError as error:
+            log(f"Claude couldn't answer ({error}); answering locally.")
     return spoken_reply(config, "They said: " + said)
+
+
+FIRST_PERSON = {"i", "i'm", "i've", "i'd", "i'll", "my", "mine", "myself", "our", "ours", "we", "we're", "us"}
+
+
+def personal(question: str) -> bool:
+    """Whether a question is about you ("when did I pay the bill", "what's my lease deposit"), so it's answered from
+    your files and never leaves this computer. "Tell me why cats purr" isn't: "me" alone doesn't count."""
+    return bool(set(words(question)) & FIRST_PERSON)
 
 
 ORDINALS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "eleventh",
@@ -454,8 +615,10 @@ def spoken_name(name: str) -> str:
     return re.sub(r"[_\-.]+", " ", Path(name).stem if "." in name else name).strip()
 
 
-def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = False, opened: list[dict] | None = None) -> str:
-    """Do each step and return what Rigved says about it all. What it opens is added to `opened`, for "open it" later."""
+def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = False, opened: list[dict] | None = None,
+              searching=lambda: None) -> str:
+    """Do each step and return what Rigved says about it all. What it opens is added to `opened`, for "open it" later;
+    `searching` is told when an answer has to wait on the web."""
     opened = [] if opened is None else opened
     said: list[str] = []
     done = failed = False
@@ -479,6 +642,10 @@ def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = Fals
             said.append(line(config, "fresh"))
         elif step.kind == "open":
             last = conversation.last_opened() if step.target in REFERENCES else None
+            parts = step.target.split(" and ")
+            if not last and len(parts) > 1 and all(resolve(part, config, files=False)[0] for part in parts):
+                steps.extend(Step("open", part) for part in parts)  # "google drive and google chrome": no file search
+                continue
             kind, name, thing = (last["kind"], last["name"], last["thing"]) if last else resolve(step.target, config)
             if not kind and " and " in step.target:  # "open fidelity.com and google chrome": two things
                 steps.extend(Step("open", part) for part in step.target.split(" and "))
@@ -512,10 +679,10 @@ def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = Fals
                 launch("gio", "open", "https://www.google.com/search?q=" + re.sub(r"\s+", "+", step.target))
             done = True
             said.append(line(config, "search", target=step.target))
-        elif step.kind == "ask":
+        elif step.kind == "ask" and (not config.claude_model or personal(step.target)):
             said.append(answer(step.target, config) if not dry_run else "(an answer from your files)")
-        elif step.kind == "talk":
-            said.append(talk(step.target, config) if not dry_run else "(a reply in character)")
+        elif step.kind in ("ask", "talk"):  # a question about the world rather than you goes to Claude, when it's set up
+            said.append(talk(step.target, config, log, searching) if not dry_run else "(a reply in character)")
         elif step.kind == "volume":
             if not dry_run:
                 volume(step.target)
@@ -526,6 +693,8 @@ def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = Fals
                 failed = True
                 continue
             done = True
+    if done and not failed and not said and all(step.kind in ("media", "volume") for step in steps):
+        return ""  # pausing a film or turning it up needs no words over it, just the tone
     if done and not failed and config.persona == "sage":  # "Tathaastu" before the news; the witty one just gets on with it
         said.insert(0, line(config, "done"))
     return " ".join(said) or line(config, "done")

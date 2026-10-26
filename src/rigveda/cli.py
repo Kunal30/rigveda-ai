@@ -243,9 +243,15 @@ def main() -> None:
     cmd_listen.add_argument("--voice", help="Who speaks, e.g. am_michael or hm_omega (remembered)")
     cmd_listen.add_argument("--persona", choices=["witty", "sage"], help="How Rigved talks (remembered)")
     cmd_listen.add_argument("--mode", choices=["key", "wake"],
-                            help='key: listen only after Super+R; wake: always listen for "Rigved" (remembered)')
+                            help='key: listen only while Right Ctrl is held or after Super+R; wake: the keys, and also '
+                                 'always listen for "Hey Rigved" (remembered)')
     cmd_listen.add_argument("--keys", default="<Super>r", help="The shortcut in GNOME's notation (default: <Super>r)")
     cmd_listen.add_argument("--press", action="store_true", help="Make the running listener listen now (what the shortcut does)")
+    cmd_listen.add_argument("--enroll", action="store_true",
+                            help="Learn your voice from you reading a short passage, so hands-free Rigved answers only you")
+    cmd_listen.add_argument("--train", action="store_true",
+                            help="Train voice match on the clips kept so far: you against the TV, films and other voices")
+    cmd_listen.add_argument("--label", action="store_true", help="Play the clips heard hands-free and say which are you")
     cmd_listen.add_argument("--autostart", action="store_true", help="Always listen, from every login on (a systemd user service)")
     cmd_listen.add_argument("--no-autostart", action="store_true", help="Stop listening at login")
     cmd_orb = commands.add_parser("orb", help="A floating assistant that stays on screen: your stats and a chat.")
@@ -309,17 +315,24 @@ def main() -> None:
         if args.press:
             voice.press()
             return
+        if args.enroll:
+            voice.enroll()
+            return
+        if args.train or args.label:
+            from . import voiceprint
+
+            voiceprint.train() if args.train else voiceprint.label()
+            return
         if args.no_autostart:
             print("Rigveda won't listen at login any more." if desktop.remove_listen_service() else "It wasn't set to listen at login.")
             return
         if args.autostart:
             desktop.install_listen_service()
+            desktop.install_listen_key(args.keys)
             if config.listen == "wake":
-                desktop.remove_hotkey(desktop.LISTEN_SLOT)
-                print('Rigveda is listening, and will after every login. Say "Rigved", then what you want. '
-                      "Stop with `rigveda listen --no-autostart`.")
+                print('Rigveda is listening, and will after every login. Say "Hey Rigved", then what you want, or use '
+                      "the keys. Stop with `rigveda listen --no-autostart`.")
             else:
-                desktop.install_listen_key(args.keys)
                 print(f"Press {args.keys.replace('<', '').replace('>', '+').title()} and say what you want; the microphone "
                       "is closed the rest of the time. Stop with `rigveda listen --no-autostart`.")
             return

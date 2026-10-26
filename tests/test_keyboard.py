@@ -34,7 +34,7 @@ def keys(monkeypatch: pytest.MonkeyPatch):
     """A Keyboard reading from a pipe, and a way to press keys into it."""
     read, write = os.pipe()
     calls: list[str] = []
-    monkeypatch.setattr(Keyboard, "open", lambda self: {read: Path("/dev/input/test")})
+    monkeypatch.setattr(Keyboard, "open", lambda self, already: {read: Path("/dev/input/test")})
     watcher = Keyboard("KEY_RIGHTCTRL", lambda: calls.append("held"), lambda: calls.append("released"), log=lambda m: None)
     watcher.start()
 
@@ -68,3 +68,24 @@ def test_a_shortcut_like_ctrl_c_does_nothing(keys) -> None:
     key(46, 0, then=keyboard.HOLD + 0.1)
     key(97, 0, then=0.05)
     assert calls == []
+
+
+def test_a_keyboard_plugged_back_in_is_picked_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The mouse stays open the whole time, so a replugged keyboard must be found by looking again."""
+    mouse, _ = os.pipe()
+    read, write = os.pipe()
+    plugged = threading.Event()
+    calls: list[str] = []
+    monkeypatch.setattr(keyboard, "RESCAN", 0.1)
+    watcher = Keyboard("KEY_RIGHTCTRL", lambda: calls.append("held"), lambda: calls.append("released"), log=lambda m: None)
+    watcher.open = lambda already: {mouse: Path("/dev/input/mouse")} | (  # this watcher only: others still run
+        {read: Path("/dev/input/keyboard")} if plugged.is_set() else {})
+    watcher.start()
+    time.sleep(0.15)
+    plugged.set()
+    time.sleep(0.25)  # the next look finds it
+    os.write(write, EVENT.pack(0, 0, EV_KEY, 97, 1))
+    time.sleep(keyboard.HOLD + 0.15)
+    os.write(write, EVENT.pack(0, 0, EV_KEY, 97, 0))
+    time.sleep(0.1)
+    assert calls == ["held", "released"]
