@@ -1,7 +1,9 @@
 """Archives (zip, jar, apk, tar, gz, ova): every file inside is read by the reader for its type.
 
 Limits keep a hostile or enormous archive in check: members are counted and sized before they're unpacked, and
-archives inside archives are opened only two levels deep.
+archives inside archives are opened only two levels deep. Libraries bundled into Java builds (BOOT-INF/lib,
+WEB-INF/lib) are skipped: a Spring Boot jar carries the whole AWS SDK, hundreds of thousands of chunks that aren't
+yours.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ MAX_TOTAL = 4 * 2**30
 MAX_DEPTH = 2
 ZIPS = (".zip", ".jar", ".apk", ".aar", ".war")
 TARS = (".tar", ".tgz", ".ova")
+BUNDLED = ("BOOT-INF/lib/", "WEB-INF/lib/")
 
 _depth = threading.local()
 
@@ -39,6 +42,11 @@ def _read_member(stream, name: str, folder: Path, number: int, config) -> list[S
     finally:
         saved.unlink(missing_ok=True)
     return [Segment(segment.text, name + (f", {segment.location}" if segment.location else "")) for segment in found]
+
+
+def bundled(name: str) -> bool:
+    """A library packed into a Java build rather than a file of the user's own."""
+    return any(folder in name for folder in BUNDLED)
 
 
 def read_archive(path: Path, config) -> list[Segment]:
@@ -62,6 +70,8 @@ def _unpack(path: Path, folder: Path, config) -> list[Segment]:
             for number, info in enumerate(archive.infolist()[:MAX_MEMBERS]):
                 if info.is_dir() or info.file_size > MAX_MEMBER or total + info.file_size > MAX_TOTAL:
                     continue
+                if bundled(info.filename):
+                    continue
                 total += info.file_size
                 with archive.open(info) as stream:
                     segments += _read_member(stream, info.filename, folder, number, config)
@@ -72,6 +82,8 @@ def _unpack(path: Path, folder: Path, config) -> list[Segment]:
                 if number >= MAX_MEMBERS:
                     break
                 if not member.isfile() or member.size > MAX_MEMBER or total + member.size > MAX_TOTAL:
+                    continue
+                if bundled(member.name):
                     continue
                 total += member.size
                 stream = archive.extractfile(member)
