@@ -254,6 +254,7 @@ def main() -> None:
     cmd_listen.add_argument("--label", action="store_true", help="Play the clips heard hands-free and say which are you")
     cmd_listen.add_argument("--autostart", action="store_true", help="Always listen, from every login on (a systemd user service)")
     cmd_listen.add_argument("--no-autostart", action="store_true", help="Stop listening at login")
+    commands.add_parser("catalog", help="Learn this computer's settings and apps, for voice commands (done weekly by itself).")
     cmd_orb = commands.add_parser("orb", help="A floating assistant that stays on screen: your stats and a chat.")
     cmd_orb.add_argument("--port", type=int, default=8765, help="Port of `rigveda serve`")
     cmd_orb.add_argument("--autostart", action="store_true", help="Keep it on screen from every login on (a systemd user service)")
@@ -296,6 +297,10 @@ def main() -> None:
         keys = "+".join(part.title() for part in args.keys.replace("><", "+").strip("<>").replace(">", "+").split("+"))
         print(f"Press {keys} anywhere to open the writing window. "
               "Change or remove it in Settings → Keyboard → Custom Shortcuts, or with `rigveda hotkey --remove`.")
+        return
+    if args.command == "catalog":
+        from . import catalog
+        catalog.build(config)
         return
     if args.command == "drive":
         drive_command(args, db, config)

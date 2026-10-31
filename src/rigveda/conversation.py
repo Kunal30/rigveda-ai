@@ -15,8 +15,10 @@ import time
 from pathlib import Path
 
 PATH = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "rigveda-conversation.json"
-TURNS = 6  # exchanges remembered
-FRESH = 600  # seconds of quiet after which the conversation starts over
+TURNS = 6  # exchanges the local model hears
+LONG = 20  # exchanges Claude hears, and how many are kept
+CHOOSING = 120  # seconds Rigved's "which one?" stays open, whatever else is said meanwhile
+FRESH = 1_800  # seconds of quiet after which the conversation starts over
 LONGEST = 1_200  # characters kept of each thing said; a long answer's gist is enough to follow up on
 
 STANDALONE_PROMPT = """Rewrite the user's latest message so it makes sense on its own, without the conversation: put in \
@@ -50,9 +52,10 @@ def _update(change) -> None:
         partial.replace(PATH)
 
 
-def recent() -> list[dict]:
-    """The exchanges still part of the conversation, oldest first: none if it went quiet for FRESH seconds."""
-    turns = _read()[-TURNS:]
+def recent(most: int = TURNS) -> list[dict]:
+    """The last `most` exchanges still part of the conversation, oldest first: none if it went quiet for FRESH
+    seconds."""
+    turns = _read()[-most:]
     if not turns or time.time() - turns[-1].get("at", 0) > FRESH:
         return []
     return turns
@@ -66,7 +69,7 @@ def add(you: str, rigved: str, source: str, opened: dict | None = None, private:
         turn["private"] = True
     if opened:
         turn["opened"] = opened
-    _update(lambda turns: (turns + [turn])[-TURNS:])
+    _update(lambda turns: (turns + [turn])[-LONG:])
 
 
 def forget() -> None:
@@ -76,8 +79,34 @@ def forget() -> None:
 def last_opened() -> dict | None:
     """The last thing Rigved opened in this conversation."""
     for turn in reversed(recent()):
-        if turn.get("opened"):
+        if turn.get("opened") and turn["opened"].get("kind") not in ("choices", "confirm", "hints"):
             return turn["opened"]
+    return None
+
+
+def choices() -> list[str]:
+    """The files Rigved just asked you to choose between, if you haven't chosen yet."""
+    asked = asking()
+    return asked["thing"].split("\n") if asked and asked["kind"] == "choices" else []
+
+
+def confirming() -> dict | None:
+    """What Rigved asked you to say yes to ("Restart?"), if you haven't answered: {"name": what it asked, "thing":
+    the steps, as JSON}."""
+    asked = asking()
+    return asked if asked and asked["kind"] == "confirm" else None
+
+
+def asking() -> dict | None:
+    """What Rigved asked you to choose between, if you haven't chosen yet: {"kind": "choices", "name", "thing" (the
+    files, a line each), "app" if they're to open in one, "at"}. A "which one?" stays open for CHOOSING seconds, even
+    if something else is said meanwhile ("uh…", or a misheard answer), until something is opened."""
+    for turn in reversed(recent()):
+        opened = turn.get("opened")
+        if opened and opened.get("kind") in ("choices", "confirm"):
+            return {**opened, "at": turn.get("at", 0)} if time.time() - turn.get("at", 0) <= CHOOSING else None
+        if opened:  # opened since: chosen, or moved on
+            return None
     return None
 
 
@@ -90,9 +119,9 @@ def messages() -> list[dict]:
 
 
 def transcript(turns: list[dict] | None = None, public: bool = False) -> str:
-    """The conversation as lines a model can read, or "" when there is none; with `public`, for Claude, without the
-    turns answered from your files."""
-    turns = recent() if turns is None else turns
+    """The conversation as lines a model can read, or "" when there is none; with `public`, for Claude: more of it
+    (LONG exchanges), without the turns answered from your files."""
+    turns = (recent(LONG if public else TURNS)) if turns is None else turns
     if public:
         turns = [turn for turn in turns if not turn.get("private") and turn.get("from") != "chat"]
     return "\n".join(f"User: {turn['you']}\nRigved: {turn['rigved']}" for turn in turns)

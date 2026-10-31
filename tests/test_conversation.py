@@ -45,14 +45,14 @@ def test_follow_ups_go_to_the_model_with_the_conversation(monkeypatch: pytest.Mo
         return json.dumps({"steps": [{"action": "ask", "target": "how much is the deposit on my lease"}]})
 
     monkeypatch.setattr(llm, "quick", model)
-    assert actions.understand("open the one from 2023", Config()) == [Step("open", "one from 2023")]  # nothing to lean on
-    assert prompts == []
+    actions.understand("open the one from 2023", Config())  # nothing is called that: the model works out what's meant
+    assert len(prompts) == 1 and "User:" not in prompts[0]
     conversation.add("when does my lease end", "In May.", "voice")
     assert actions.understand("and the deposit", Config()) == [Step("ask", "how much is the deposit on my lease")]
     assert actions.understand("open the one from 2023", Config())[0].kind == "ask"  # now it leans on the conversation
-    assert "User: when does my lease end\nRigved: In May." in prompts[0]
+    assert "User: when does my lease end\nRigved: In May." in prompts[1]
     assert actions.understand("open downloads", Config()) == [Step("open", "downloads")]  # needs nothing earlier
-    assert len(prompts) == 2
+    assert len(prompts) == 3
 
 
 def test_standalone_rewrites_only_when_there_is_a_conversation(monkeypatch: pytest.MonkeyPatch) -> None:

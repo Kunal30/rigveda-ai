@@ -1,6 +1,7 @@
 import json
 import math
 import threading
+import time
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 
@@ -24,7 +25,7 @@ def listener(tmp_path, monkeypatch, config):
     monkeypatch.setattr(voice.Mouth, "blip", staticmethod(lambda rising=True: None))  # no tones from the speakers
     monkeypatch.setattr(actions, "addressed", lambda said, config: "honey" not in said)  # no model asked
     monkeypatch.setattr(voice, "recording", lambda: [])  # never the real PipeWire
-    monkeypatch.setattr(voice, "audible", lambda: True)  # as if a film were on: the strict MATCH
+    monkeypatch.setattr(voice, "audible", lambda: True)  # as if a film were on: PLAYING_MATCH
     heard = voice.Listener.__new__(voice.Listener)
     heard.config, heard.log, heard.shown = config, lambda message: None, ("", 0.0, 0.0)
     heard.interrupted = False
@@ -154,7 +155,7 @@ def test_what_plays_is_paused_while_you_talk_and_played_again_after(listener, mo
 
 
 def test_other_voices_are_passed_over_and_yours_needs_no_name_to_pause(listener, monkeypatch) -> None:
-    said = ["Rigved, open downloads", "pause", "Rigved, open downloads", "pause", "pause the movie and tell me a story"]
+    said = ["Rigved, open downloads", "stop", "Rigved, open downloads", "pause", "pause the movie and tell me a story"]
     voices = iter([0.1, 0.1, 0.8, 0.8, 0.8])  # a film's actors, then you
     monkeypatch.setattr(voice, "Ears", lambda **options: FakeEars(Speech(text) for text in said))
     listener.busy, listener.done = threading.Lock(), 0.0
@@ -169,19 +170,19 @@ def test_other_voices_are_passed_over_and_yours_needs_no_name_to_pause(listener,
     assert answered == ["open downloads", "pause"]  # with the name needed, the longer request without it isn't taken
 
 
-def test_a_soft_short_command_counts_when_nothing_is_playing(listener, monkeypatch) -> None:
-    said = ["play the movie", "play the movie"]
-    sounding = iter([True, False])  # the film playing, then paused
-    monkeypatch.setattr(voice, "audible", lambda: next(sounding))
+def test_a_short_command_over_a_film_counts_but_the_films_voices_dont(listener, monkeypatch) -> None:
+    said = ["turn it down", "pause"]
+    voices = iter([0.01, 0.28])  # the film's actors, then your "pause" over it (2026-10-25)
     monkeypatch.setattr(voice, "Ears", lambda **options: FakeEars(Speech(text) for text in said))
     listener.busy, listener.done = threading.Lock(), 0.0
-    listener.score = lambda audio: 0.32  # a second of you, said softly
+    listener.score = lambda audio: next(voices)
+    listener.hear = lambda audio: str(audio)
     listener.command = lambda audio, yours=False: (str(audio), actions.wake(audio))
     answered = []
-    listener.respond = lambda command, ears=None: answered.append(command) or ["media play"]
+    listener.respond = lambda command, ears=None: answered.append(command) or ["media pause"]
     with pytest.raises(Done):
         listener.listen_for_name()
-    assert answered == ["play the movie"]  # while the film played it might have been the film
+    assert answered == ["pause"]
 
 
 def test_audible_counts_only_running_output_streams(monkeypatch) -> None:
@@ -364,6 +365,7 @@ def test_talking_over_rigved_stops_it_but_its_own_voice_doesnt(listener) -> None
         ears.clear = lambda: None
         listener.hush, listener.interrupted = threading.Event(), False
         listener.score = lambda audio: score
+        listener.hear = lambda audio: "What about memory?"
         speaking = threading.Event()
         speaking.set()
         watcher = threading.Thread(target=listener.overheard, args=(ears, speaking))
@@ -373,6 +375,50 @@ def test_talking_over_rigved_stops_it_but_its_own_voice_doesnt(listener) -> None
         watcher.join()
         assert listener.hush.is_set() is stops and listener.interrupted is stops
         assert (ears.frames.qsize() > 0) is stops  # what you said is kept for the next turn
+
+
+def test_its_own_words_from_the_tv_dont_stop_it_even_when_they_sound_like_you(listener) -> None:
+    said = "A CPU is built to be a clever generalist: it has big caches, branch prediction and high clock speeds."
+    for heard, stops in (("It has big cash.", False), ("Wait, what about memory?", True)):  # 2026-10-26: it cut itself off
+        ears = fake_ears([1] * 40)
+        ears.clear = lambda: None
+        listener.hush, listener.interrupted = threading.Event(), False
+        listener.score = lambda audio: 0.76
+        listener.hear = lambda audio: heard
+        speaking = threading.Event()
+        speaking.set()
+        watcher = threading.Thread(target=listener.overheard, args=(ears, speaking, said))
+        watcher.start()
+        watcher.join(timeout=0.5)
+        speaking.clear()
+        watcher.join()
+        assert listener.hush.is_set() is stops
+
+
+def test_its_own_words_coming_back_after_it_stops_are_ignored(listener, monkeypatch) -> None:
+    said = ["it has big caches", "what's a cache", "it has big caches"]
+    monkeypatch.setattr(voice, "Ears", lambda **options: FakeEars(Speech(text) for text in said))
+    listener.busy, listener.done = threading.Lock(), 0.0
+    later = iter([0.0, 0.0, 10.0])  # the last said back to it 10 s on: you, quoting it
+    listener.saying = ("A CPU has big caches and branch prediction.", time.monotonic())
+    real = listener.echo
+    listener.echo = lambda heard, began=0.0: real(heard, began=began + next(later))
+    listener.score = lambda audio: 0.9
+    listener.command = lambda audio, yours=False: (str(audio), None)
+    logged = []
+    listener.log = logged.append
+    answered = []
+    listener.answer = lambda ears, command: answered.append(command)
+    with pytest.raises(Done):
+        listener.listen_for_name()
+    assert answered == ["what's a cache", "it has big caches"], logged
+
+
+def test_echoes_are_its_words_near_enough_but_not_your_commands() -> None:
+    said = "A CPU is built to be a clever generalist: it has big caches, branch prediction and high clock speeds."
+    assert voice.echoes("It has big cash.", said) and voice.echoes("The EU was built to", said)
+    assert not voice.echoes("What is a GPU then?", said)
+    assert not voice.echoes("pause", "Press pause whenever you like.") and not voice.echoes("stop", "I'll stop there.")
 
 
 def test_muting_closes_the_microphone_until_unmuted(listener, monkeypatch, tmp_path) -> None:
@@ -408,3 +454,132 @@ def test_speech_while_space_is_held_is_kept_as_yours_to_train_on(listener) -> No
         listener.holds = Holds(held)
         listener.keep(np.zeros(voice.RATE, dtype=np.float32), 0.9)
     assert kept == ["you", "heard"]
+
+
+def test_a_loud_short_word_over_a_film_starts_speech_but_the_tv_doesnt() -> None:
+    for amplitude, heard in ((0.3, True), (0.01, False)):  # you at the headset (-10 dBFS), the TV across the room (-40)
+        ears = fake_ears([amplitude] * 12 + [0] * 40)
+        ears.speech = lambda frame: 0.3 if frame[0] else 0.0  # a sharp "pause" over a film: only somewhat speech-like
+        assert (ears.next(timeout=0.2) is not None) is heard
+
+
+def test_just_pause_is_taken_even_when_the_voice_doesnt_match(listener, monkeypatch) -> None:
+    said = ["awesome", "pause", "pause the movie and tell me a story"]
+    monkeypatch.setattr(voice, "Ears", lambda **options: FakeEars(Speech(text) for text in said))
+    listener.busy, listener.done = threading.Lock(), 0.0
+    listener.score = lambda audio: 0.05  # shouted over a loud film: scored like the film's own voices
+    listener.hear = lambda audio: str(audio)
+    listener.command = lambda audio, yours=False: (str(audio), actions.wake(audio))
+    answered = []
+    listener.respond = lambda command, ears=None: answered.append(command) or ["media pause"]
+    with pytest.raises(Done):
+        listener.listen_for_name()
+    assert answered == ["pause"]  # not the film's "awesome", nor a longer request in a voice that isn't yours
+
+
+def test_muting_mid_conversation_stops_the_follow_ups(listener) -> None:
+    listener.quiet = threading.Event()
+    asked = []
+    listener.request = lambda ears, timeout, check=False: asked.append(timeout) or "and the weather"
+    listener.respond = lambda command, ears=None: listener.quiet.set() or ["time"]  # muted while it answered
+    assert listener.follow(None, "what time is it") == ["time"]
+    assert asked == []  # not listening for what comes next
+
+
+def test_mm_hm_over_rigved_lets_it_carry_on_but_wait_stops_it(listener) -> None:
+    for heard, stops in (("Mm-hm.", False), ("Yeah, right.", False), ("Wait.", True), ("No, actually, the other one.", True)):
+        ears = fake_ears([1] * 40)
+        ears.clear = lambda: None
+        listener.hush, listener.interrupted = threading.Event(), False
+        listener.score = lambda audio: 0.9
+        listener.hear = lambda audio: heard
+        speaking = threading.Event()
+        speaking.set()
+        watcher = threading.Thread(target=listener.overheard, args=(ears, speaking, "Cats purr when they're content."))
+        watcher.start()
+        watcher.join(timeout=0.5)
+        speaking.clear()
+        watcher.join()
+        assert listener.hush.is_set() is stops, heard
+
+
+def test_what_stops_rigved_and_what_only_agrees() -> None:
+    assert voice.backchannel("Mm-hm.") and voice.backchannel("Uh-huh") and voice.backchannel("Oh, I see.")
+    assert not voice.backchannel("Yeah, but what about dogs?") and not voice.backchannel("Wait.")
+    assert voice.hushing("Stop.") and voice.hushing("Okay, stop talking.") and voice.hushing("Hold on")
+    assert not voice.hushing("Stop the music") and not voice.hushing("Wait, what about dogs?")
+
+
+def test_stop_said_over_rigved_stops_it_and_isnt_a_command(listener) -> None:
+    listener.interrupted = listener.hushed = True
+    listener.score = lambda audio: 0.9
+    listener.hear = lambda audio: str(audio)
+    assert listener.request(FakeEars([Speech("Stop."), Speech("What time is it?")]), timeout=5) == "What time is it?"
+    listener.hushed = False  # not said over it: "no" answers its question
+    assert listener.request(FakeEars([Speech("No.")]), timeout=5) == "No."
+
+
+def test_a_trailing_and_waits_for_the_rest_and_a_question_doesnt(listener) -> None:
+    listener.finished = lambda audio: 0.6
+    audio = np.ones(8000, dtype=np.float32)
+    for said, done in (("Remind me to call mom and", False), ("What's the weather, um", False),
+                       ("What's the capital of Peru?", True), ("Pause the movie.", True)):
+        listener.hear = lambda audio, said=said: said
+        listener.draft = None
+        assert (listener.finished_words(audio) >= 0.5) is done, said
+    listener.finished = lambda audio: 0.1  # sounded mid-sentence, but asked a question
+    listener.hear = lambda audio: "Is it raining?"
+    assert listener.finished_words(audio) >= 0.5
+
+
+def test_what_was_written_down_in_the_pause_isnt_written_down_again(listener) -> None:
+    listener.whisper = type("Whisper", (), {"transcribe": lambda self, audio, **options: ([], None)})()
+    speech = np.random.default_rng(0).standard_normal(16000).astype(np.float32)
+    listener.draft = (speech, "what time is it")
+    pause = np.zeros(int(voice.PAUSE * voice.RATE), dtype=np.float32)
+    assert listener.hear(np.concatenate([speech, pause])) == "what time is it"
+    assert listener.hear(np.concatenate([speech, speech])) == ""  # more was said: written down afresh
+
+
+def test_rigved_tells_its_own_voice_coming_back_from_yours(tmp_path) -> None:
+    from rigveda import echo
+
+    rng = np.random.default_rng(1)
+    rate, delay = echo.RATE, 0.62
+    played = (rng.standard_normal(rate * 6) * np.repeat(rng.random(6 * 25) > 0.3, rate // 25) * 0.1).astype(np.float32)
+    start = 1000.0
+    told = echo.Echo(tmp_path / "echo.npz", log=lambda message: None)
+    told.play(played, rate, at=start)
+    mic = np.zeros(int(rate * 8), dtype=np.float32)
+    lag = int(delay * rate)
+    mic[lag:lag + len(played)] += 0.3 * played  # its voice, a little late and quieter
+    mic += rng.standard_normal(len(mic)).astype(np.float32) * 1e-4
+    frames = mic[: len(mic) // echo.FRAME * echo.FRAME].reshape(-1, echo.FRAME)
+    for index, frame in enumerate(frames):
+        told.hear(frame, start + (index + 1) * echo.FRAME / rate)
+    assert told.learn(start, start + 6)
+    assert abs(told.delay - delay) < 0.01 and (tmp_path / "echo.npz").exists()
+
+    def judged(sound):
+        judge = echo.Judge(told)
+        verdicts = []
+        for index in range(40, 120):  # 1.3 s to 3.8 s in: its voice is coming back
+            at = start + (index + 1) * echo.FRAME / rate
+            verdicts.append(judge.only_rigved(sound[index * echo.FRAME:(index + 1) * echo.FRAME], at))
+        return verdicts
+
+    assert all(judged(mic))  # only its own voice
+    you = mic + (rng.standard_normal(len(mic)) * 0.3).astype(np.float32)  # you, louder, talking over it
+    assert not any(judged(you)[echo.WINDOW:])
+    assert echo.Echo(tmp_path / "echo.npz").ready  # remembered for next time
+    assert told.extra(frames[0], start - 10) is None  # nothing played then: nothing to tell apart
+
+
+def test_telling_its_voice_by_what_it_played_leaves_the_words_check_working(listener, tmp_path) -> None:
+    # 2026-10-30: the Echo was kept as `listener.echo`, hiding the method; every hands-free request then failed
+    from rigveda import echo
+
+    listener.own_voice = listener._own_voice()
+    assert isinstance(listener.own_voice, echo.Echo)
+    listener.saying = ("A CPU has big caches.", time.monotonic())
+    assert listener.echo("has big caches", began=time.monotonic())

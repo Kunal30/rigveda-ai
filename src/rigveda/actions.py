@@ -11,14 +11,16 @@ from __future__ import annotations
 import datetime
 import difflib
 import json
+import queue
 import random
 import re
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import conversation
+from . import conversation, names, notes
 from .config import Config
 
 WAKE_WORDS = ("rigved", "rigveda")
@@ -26,7 +28,13 @@ SHORT_NAMES = {"ved", "veda"}  # "Hey Ved"; said alone it's heard as "wait" or "
 FILLERS = {"hey", "hi", "hello", "ok", "okay", "oh", "o", "ah", "uh", "um", "hmm", "namaste", "so", "yo"}
 VERBS = (r"(?:please\s+)?(?:open|launch|start|run|show(?:\s+me)?|go\s+to|bring\s+up|pause|play|resume|find|search|"
          r"google(?!\s+(?:chrome|drive|maps|docs|calendar|photos|music)))")
-KINDS = ("open", "find", "search", "ask", "talk", "time", "date", "volume", "media", "forget", "stop")
+KINDS = ("open", "find", "search", "ask", "talk", "time", "date", "volume", "media", "forget", "stop",
+         "app", "press", "setting", "power", "window", "screenshot", "type", "check", "do", "browse")
+DESKTOP = ("app", "press", "setting", "power", "window", "screenshot", "type")  # done through desk.py
+YES = re.compile(r"(?:(?:yes|yeah|yep|yup|sure|ok|okay|alright|confirm|absolutely|of course|please do|do it|go ahead|"
+                 r"go for it)(?: |$))+(?:please|rigved|now)?")
+NO = re.compile(r"(?:no|nope|cancel|don't|do not|never ?mind|leave it|not now|forget it|stop)(?: (?:thanks|thank you|"
+                r"please|rigved|don't|do it))*")
 # What "open it" can say: the last thing opened. Other targets with these words in them are left to the model.
 REFERENCES = {"it", "that", "this", "that file", "the file", "that one", "this one", "it again", "that again", "the same"}
 POINTING = {"it", "that", "this", "one", "ones", "them", "those", "these", "same", "there", "previous", "last", "other"}
@@ -149,6 +157,14 @@ def _rule(text: str) -> Step | None:
     if re.fullmatch(r"(?:forget (?:that|it|this|everything|all that|the conversation|what i said)|start over|"
                     r"start (?:a )?new (?:conversation|topic)|new (?:conversation|topic)|change (?:of )?(?:the )?topic|clean slate)", text):
         return Step("forget")
+    if re.fullmatch(r"(?:what(?:'s| is) my (?:name|first name|full name)(?: likely)?|who am i|do you know (?:my name|who i am))", text):
+        return Step("talk", text)  # it's in the config, not something to look for in your files ("George", 2026-10-30)
+    if re.fullmatch(r"(?:where(?:'s| is| did) (?:the |my )?(?:floating )?orb(?: go)?|(?:show|open|bring back|start|restart) "
+                    r"(?:me )?(?:the |my )?(?:floating |rigved )?orb(?: again| back)?(?: up)?)", text):
+        return Step("do", "start the orb")  # it was closed: its service starts it again
+    if re.fullmatch(r"(?:undo (?:that|it|this|the last (?:change|thing))|undo|put (?:it|that) back|change (?:it|that) back|"
+                    r"revert (?:that|it)|go back to how it was)", text):
+        return Step("setting", "undo")  # whatever Rigved last changed: a setting, a service, the sound output
     if re.fullmatch(r"(?:what(?:'s| is) the time|what time is it|tell me the time|time)", text):
         return Step("time")
     if re.fullmatch(r"(?:what(?:'s| is) (?:the date|today's date)|what day is (?:it|today)|today's date|date)", text):
@@ -173,8 +189,12 @@ def _rule(text: str) -> Step | None:
         return Step("media", "play")
     if re.fullmatch(r"(?:next|skip)(?: (?:song|track|video|one))?|play the next (?:song|track|video|one)", text):
         return Step("media", "next")
-    if re.fullmatch(r"(?:previous|go back)(?: (?:song|track|video|one))?|play the previous (?:song|track|video|one)", text):
+    if re.fullmatch(r"previous(?: (?:song|track|video|one))?|go back (?:a |one )?(?:song|track)|play the previous (?:song|track|video|one)", text):
         return Step("media", "previous")
+    from .browser import quick
+
+    if meant := quick(text):  # "scroll down a bit", "go back", "show numbers", "click 14": the browser, no model
+        return Step("browse", meant)
     if match := re.fullmatch(r"(?:search|google|look up)(?: the web| online| google)?(?: for)? (.+)", text):
         return Step("search", match.group(1))
     if match := re.fullmatch(r"(?:find|where is|where's|locate)(?: me)?(?: my| the| a)? (.+)", text):
@@ -203,8 +223,38 @@ volume: target "up", "down", "mute", "unmute" or a number 0-100
 media: target "play", "pause", "next" or "previous"
 forget: the user wants to start over, forget the conversation or change the topic (target: "")
 stop: the user wants nothing (target: "")
+app: do something an app offers, in that app (target "app: what", e.g. "terminal: new window", "chrome: new incognito window", "firefox: new private window", "chrome: new tab", "pycharm: new project", "pycharm: run"). Use this, not open, for a new or another window or tab of an app, or anything done inside an app. When the app isn't named, use the one in front
+press: press a button, menu, tab or menu item in the app in front, by its name (target: the name, e.g. "File", "Preferences", "Export")
+setting: change a desktop setting (target: the setting and on or off, e.g. "dark mode on", "night light off", "do not disturb on", "large text on", "wifi off", "bluetooth on", "animations off", "hide the dock on"); for a setting listed below as "<schema> <key>: what it is (what it can be; now what it is)", the target is "<schema> <key> <value>", e.g. "org.gnome.settings-daemon.plugins.color night-light-temperature 2700"; target "undo" puts back the last setting changed. The power mode (performance, balanced, power saver, battery saver) and muting the microphone are do, not setting
+power: target "lock", "suspend", "restart", "shut down" or "log out"
+window: something done to the window in front (target "maximize", "minimize", "restore", "left half", "right half", "full screen", "close", or "switch to <app>")
+screenshot: take a screenshot (target "screen" or "window")
+type: type text into the app in front (target: the text)
+do: change something about this computer that can be undone, other than a setting: start, stop or restart a service (e.g. ollama, docker, the listening service, the orb), connect to or disconnect from a Wi-Fi network or connection by name, connect or disconnect a Bluetooth device (mouse, headphones), switch the sound output or input (e.g. to the headphones or the TV), mute or unmute the microphone or sound, set the power mode (performance, balanced, power saver, battery saver), or make an app the default for a kind of file, e.g. VLC for MKV (target: what to do, complete on its own)
+do also (Rigved asks before doing these): quit or force quit a program ("quit firefox", "kill what's using the most memory"), delete, trash or remove a file or folder by name (it goes to the Trash), move or rename a file ("move the trailer to documents" is one do step, not find then do), empty the Trash, install or uninstall software
+Deleting for good, wiping, formatting, and anything else needing sudo: unknown (target: ""), one step
+"undo that", "put it back", "change it back": setting "undo" (not forget)
+browse: something in the web browser's page or tabs ("focus on Chrome", "stop focusing" too): click a link or button by what it says ("click sign in", "the second result", "open the pricing page"), scroll, go back or forward, find words on the page, show numbers on what can be clicked, go to or close tabs ("go to my Gmail tab", "close the YouTube tabs"), say which tabs are open ("what tabs do I have open?": the target is that question, unchanged), reopen a closed tab, or type into the page (target: what to do, complete on its own). A new tab or window of the browser is app, not browse
+check: a question about this computer itself, answered by looking at it: disk space, memory, CPU, GPU, temperatures, battery, network, IP address, Wi-Fi, uptime, what's running or using resources, installed software and versions, updates, services, devices (target: the question, complete on its own)
 unknown: none of these fit (target: "")
-Keep the user's order. Reply with JSON only.
+About Rigved itself (also written Rigveda or Rigvid): the orb is its floating circle on screen ("where's the orb", "bring the orb back", "open the Rigved app": do "start the orb"); "restart yourself" is do "restart the listening service", never the computer.
+When the user says Rigved got it wrong ("no, I meant…", "that's not what I asked") or says something loose about Rigved or the conversation, use talk with the whole message.
+Keep the user's order, and add no step that wasn't asked for. Reply with JSON only.
+"""
+CATALOG_PROMPT = """Settings and apps on this computer that may be what the command means. To open an app, the target must be an app's name as given here, even when it was called something else: its maker, a nickname or what it does (e.g. "mozilla" is Firefox):
+{catalog}
+
+"""
+LOOKING_PROMPT = """The user is looking at Chrome, at "{page}", so they mean the browser: anything about what's on the screen (clicking or pressing something, "home", "unmute", scrolling or moving around, going to a site or a section, playing, pausing, skipping or muting the video, full screen) is browse, with the whole request as the target, even if they say "in Chrome". Opening an app, a file or a folder, and questions, are not.
+
+"""
+NOTES_PROMPT = """What Rigved has learned about the user, to understand what they mean:
+{notes}
+
+"""
+CONTEXT_PROMPT = """What's on screen, to work out what the command is about ("close it", "a new one", "the file menu"):
+{context}
+
 """
 CONVERSATION_PROMPT = """The conversation so far, to work out what the command refers to. Make every target complete on its own: a follow-up such as "and the deposit?" becomes the full question, and "it", "that" or "the second one" become what they refer to.
 {conversation}
@@ -213,14 +263,45 @@ CONVERSATION_PROMPT = """The conversation so far, to work out what the command r
 
 
 def understand(command: str, config: Config) -> list[Step]:
-    """Steps for a command: rules first, the local model for anything they don't cover."""
+    """Steps for a command: rules first, the local model for anything they don't cover. "Open" by rule only names
+    something there is ("open terminal"); "open a new terminal window" goes to the model, with what's on screen."""
+    if (pending := conversation.confirming()) is not None:
+        said = " ".join(words(command))
+        if YES.fullmatch(said):
+            return [Step("yes", pending["thing"])]
+        if NO.fullmatch(said):
+            return [Step("cancel", pending.get("name", ""))]
+    from . import browser
+
+    looking = browser.looking(config)
+    if looking and (meant := browser.quick(command, looking=True)):
+        return [Step("browse", meant)]  # "a bit higher", with Chrome in front of you
+    if (shown := conversation.recent()[-1:]) and (shown[0].get("opened") or {}).get("kind") == "hints":
+        from .browser import number
+
+        if (n := number(" ".join(words(command)))) is not None:
+            return [Step("browse", f"=click {n}")]  # "fourteen", with the numbers on the page
+    if (choices := conversation.choices()) and (picked := names.choose(command, choices)):
+        app = (conversation.asking() or {}).get("app")
+        return [Step("open", f"{picked} in {app}" if app else picked)]  # "the remastered one", after Rigved asked which
+    if (match := re.fullmatch(OPEN_IN, " ".join(words(command)))) and opens_in(match.group(1)):
+        return [Step("open", match.group(1))]  # "open Mirzapur in VLC": one thing, not Mirzapur and then VLC
     steps = parse(command)
     talked = conversation.transcript()
+    if steps is not None and any(step.kind == "open" and not plain(step.target, config) for step in steps):
+        steps = None  # nothing is called "a new terminal window": the model works out what was meant
     if steps is not None and not (talked and any(leans(step.target) for step in steps)):
         return steps
     from . import llm
 
-    prompt = MODEL_PROMPT + (CONVERSATION_PROMPT.format(conversation=talked) if talked else "") + "Command: " + command
+    from . import catalog
+
+    seen, near = on_screen(looking), catalog.offered(command, config)
+    learned = notes.described()
+    prompt = (MODEL_PROMPT + (LOOKING_PROMPT.format(page=looking) if looking else "")
+              + (NOTES_PROMPT.format(notes=learned) if learned else "")
+              + (CATALOG_PROMPT.format(catalog=near) if near else "") + (CONTEXT_PROMPT.format(context=seen) if seen else "")
+              + (CONVERSATION_PROMPT.format(conversation=talked) if talked else "") + "Command: " + command)
     try:
         reply = llm.quick(config.ollama, config.model, prompt, timeout=60, format=MODEL_FORMAT)
         steps = [Step(str(step.get("action", "")), str(step.get("target", "")).strip()) for step in json.loads(reply)["steps"]]
@@ -228,11 +309,51 @@ def understand(command: str, config: Config) -> list[Step]:
         return [Step("talk", command)]
     if any(step.kind in ("time", "date") for step in steps) and re.search(ELSEWHERE, command.lower()):
         return [Step("talk", command)]  # "what time is it in London" isn't the time here: Claude knows
+    if any(step.kind in ("volume", "media") for step in steps) and not re.search(SOUND_WORDS, command.lower()):
+        # "can you hear me now?" after some volume commands came back as volume up, 100 and play (2026-10-25)
+        steps = [step for step in steps if step.kind not in ("volume", "media")] or [Step("talk", command)]
     if config.claude_model and not re.search(ASKED_TO_SEARCH, command.lower()):  # "the worst news in London today"
         steps = [Step("talk", command) if step.kind == "search" else step for step in steps]  # Claude looks it up
+    if looking:  # the window with the keyboard isn't the one you're looking at: buttons are on the page
+        def about_chrome(step: Step) -> bool:  # "click home in Chrome" came back as a new window, a switch and a press
+            target = step.target.lower()
+            return (step.kind == "press" or step.kind == "window" and "chrome" in target
+                    or step.kind == "app" and bool(re.match(r"(?:google )?chrome\b", target))
+                    and not re.search(r"\bnew (?:incognito )?(?:window|tab)\b", command.lower()))
+
+        if any(about_chrome(step) for step in steps):
+            steps = [Step("browse", command)] + [step for step in steps if not about_chrome(step)]
+    steps = [Step("open", known_app(step.target, config) or step.target)
+             if step.kind == "open" and not plain(step.target, config) else step for step in steps]
     return [step for step in steps if step.kind in KINDS] or [Step("unknown", command)]
 
 
+APP_FORMAT = {"type": "object", "properties": {"app": {"type": "string"}}, "required": ["app"]}
+
+
+def known_app(called: str, config: Config) -> str:
+    """The installed app that something nothing is called is another name for ("mozilla" → Firefox), by the local
+    model's knowledge of who makes what; "" if none is."""
+    if len(called.split()) > 4:
+        return ""
+    from . import llm
+
+    installed = sorted({name for name, _ in apps().values()})
+    try:
+        reply = llm.quick(config.ollama, config.model, "Installed apps: " + ", ".join(installed) + f"\nIs \"{called}\" "
+                          "another name for one of them (its maker, a nickname, an old name)? Reply with JSON: the app's "
+                          "name exactly as listed, or \"\" if none is.", timeout=30, format=APP_FORMAT)
+        named = str(json.loads(reply)["app"]).strip()
+    except (llm.OllamaError, ValueError, KeyError, TypeError):
+        return ""
+    return named if named in installed else ""
+
+
+OPEN_IN = r"(?:(?:okay|ok|so|now|uh|um|rigved|hey rigved) )*(?:can you |please |could you )*(?:open|play|watch|start|put on) " \
+          r"((?:the )?.+ (?:in|with|using|on) .+?)(?: please)?"
+SOUND_WORDS = (r"\b(?:volume|loud|louder|quiet|quieter|soft|softer|mute|unmute|silence|sound|up|down|max|"
+               r"percent|\d+|play|playing|pause|resume|stop|next|previous|skip|back|track|song|music|movie|film|"
+               r"video|show|episode|it)\b|%")
 ASKED_TO_SEARCH = r"\b(?:search|google|look (?:it |that )?up|browser)\b"
 ELSEWHERE = r"\b(?:in|at|utc|gmt|zone|timezone|until|since|ago|from now)\b"
 
@@ -241,6 +362,15 @@ def quick(text: str) -> bool:
     """A short command that's safe to take without the name, when it's your voice: pause, play, louder, next and such."""
     steps = parse(text)
     return bool(steps) and len(words(text)) <= 5 and all(step.kind in ("media", "volume") for step in steps)
+
+
+BARE_MEDIA = r"(?:pause|play|resume)(?: it| the (?:movie|film|video|show|music|song))?(?: please)?"
+
+
+def bare_media(text: str) -> bool:
+    """Just "pause" or "play" (or "pause the movie"): taken whoever's voice it sounds like, since a film never says
+    only that, and can't when it's paused. Over a loud film, or shouted, your voice scored as low as the film's."""
+    return bool(re.fullmatch(BARE_MEDIA, " ".join(words(text))))
 
 
 ADDRESSED_PROMPT = """Rigved is a voice assistant on the user's computer that is always listening. It hears \
@@ -278,9 +408,23 @@ Reply with JSON only."""
 ADDRESSED_FORMAT = {"type": "object", "properties": {"for_rigved": {"type": "boolean"}}, "required": ["for_rigved"]}
 
 
+GREETING = re.compile(r"(?:(?:i said|and) )?(?:(?:hey|hi|hello|okay|ok) )?(?:good (?:morning|afternoon|evening|night)|"
+                      r"morning|night|good ?bye|bye|i'm back|i am back|namaste)(?: (?:rigved|buddy|friend|mate))?")
+
+
 def addressed(said: str, config: Config) -> bool:
     """Whether something you said was said to Rigved, rather than to someone else, another app or yourself."""
     if parse(said) is not None:  # a plain command: "pause", "open downloads"
+        return True
+    from . import browser
+
+    if browser.quick(said) or (looking := browser.looking(config)) and browser.quick(said, looking=True):
+        return True  # "screw it up" is "scroll up"
+    if (choices := conversation.choices()) and names.choose(said, choices):  # "the remastered one", after "which one?"
+        return True
+    if conversation.confirming() is not None and (YES.fullmatch(" ".join(words(said))) or NO.fullmatch(" ".join(words(said)))):
+        return True  # "yes", after "restart?"
+    if GREETING.fullmatch(" ".join(words(said))):  # "good morning" in your voice: the model took it for someone else
         return True
     from . import llm
 
@@ -290,6 +434,56 @@ def addressed(said: str, config: Config) -> bool:
         return bool(json.loads(reply)["for_rigved"])
     except (llm.OllamaError, ValueError, KeyError, TypeError):
         return True  # can't tell: better to answer than to ignore you
+
+
+def plain(target: str, config: Config) -> bool:
+    """Whether "open <target>" names something there is: an app, folder, site or file by name, or what was opened."""
+    if target in REFERENCES or Path(target).is_absolute() or opens_in(target):
+        return True
+    if " ".join(words(target)) in GENERIC:  # "open preferences": of the app in front, most likely
+        return False
+    parts = target.split(" and ")
+    return all(resolve(part, config, files=False)[0] or names.matches(part) for part in parts)
+
+
+GENERIC = {"preferences", "settings", "options", "help", "about", "history", "bookmarks", "extensions", "menu",
+           "the menu", "the settings", "the preferences", "new tab", "a new tab", "new window", "a new window"}
+
+
+def opens_in(target: str) -> bool:
+    """Whether it's a file to open in a named app ("mirzapur in vlc"), not something to do in it ("a new tab in
+    chrome")."""
+    rest, app = with_app(target)
+    return app is not None and (bool(names.matches(rest)) or Path(rest).is_absolute())
+
+
+def app_name(seen: str) -> str:
+    """An app as the accessibility tree names it, as you would: "org.gnome.Terminal" → "Terminal"."""
+    return re.sub(r"^(?:[a-z0-9]+\.)+", "", seen) if re.fullmatch(r"(?:[a-z0-9]+\.)+\w+", seen) else seen
+
+
+HIDDEN_APPS = {"gnome-shell", "gjs", "orb.py", "ibus-extension-gtk3", "update-notifier", "evolution-alarm-notify",
+               "xdg-desktop-portal-gtk", "mutter-x11-frames", "fdm"}
+
+
+def on_screen(looking: str = "") -> str:
+    """What's on screen, for the model: the app in front, its window, what can be pressed in it, the apps open and
+    what Rigved opened last. Window titles and menus go to the local model only."""
+    from . import desk
+
+    seen = desk.look()
+    lines = []
+    if looking:
+        lines.append(f"Where they're looking: Google Chrome, the page \"{looking[:100]}\" (the keyboard is with {app_name(seen['app']) or 'another window'})")
+    elif seen["app"]:
+        lines.append(f"In front: {app_name(seen['app'])}, window \"{seen['window'][:100]}\"")
+    if seen["controls"]:
+        lines.append("What can be pressed there: " + ", ".join(seen["controls"][:40]))
+    if apps_open := [app_name(app) for app in seen["apps"] if app not in HIDDEN_APPS]:
+        lines.append("Apps open: " + ", ".join(apps_open))
+    if last := conversation.last_opened():
+        lines.append(f"Last opened by Rigved: {last['name']} ({last['kind']})")
+    return "\n".join(lines)
 
 
 def leans(target: str) -> bool:
@@ -368,7 +562,10 @@ def best(target: str, candidates: dict[str, object]) -> tuple[float, str, object
 
 def resolve(target: str, config: Config, files: bool = True) -> tuple[str, str, str]:
     """(kind, display name, what to open) for a spoken name: a folder, an app, a website or, with `files`, a file in
-    the index (which takes seconds). kind is "" when nothing matches."""
+    the index (which takes seconds). kind is "" when nothing matches, "choices" when several files are equally meant
+    (what to open is then each of them, a line each)."""
+    if Path(target).is_absolute() and Path(target).is_file():  # chosen from those
+        return "file", Path(target).name, target
     target = " ".join(words(target))
     wants_folder = bool(re.search(r"\b(?:folder|directory)$", target))
     target = re.sub(r"\s+(?:in|on|with|using) (?:google chrome|chrome|the browser|my browser|firefox)\b.*$", "", target)
@@ -389,6 +586,11 @@ def resolve(target: str, config: Config, files: bool = True) -> tuple[str, str, 
         return kind, label, str(thing)
     if not files:
         return "", target, ""
+    meant = names.meant(names.matches(target))  # by name first: a film's name is all there is to go on
+    if len(meant) > 1:
+        return "choices", names.spoken(meant[0].path), "\n".join(str(match.path) for match in meant)
+    if meant:
+        return "file", meant[0].path.name, str(meant[0].path)
     found = find_file(target, config)
     if found and named(target, found):  # "open" mustn't play a film because its subtitles mentioned music
         return "file", Path(found).name, found
@@ -402,6 +604,94 @@ def named(asked: str, path: str) -> bool:
     """Whether a file's name has at least half the words that matter in what was asked for."""
     wanted = {word for word in words(asked) if len(word) > 2 and word not in STOPWORDS}
     return bool(wanted) and len(wanted & set(words(re.sub(r"[_\-.]+", " ", Path(path).name)))) * 2 >= len(wanted)
+
+
+COUNTS = {2: "two", 3: "three"}
+
+
+def which(name: str, paths: list[str], config: Config) -> str:
+    """Rigved asking which of several files you meant: "You've got two of Iron Man 3 (2013): the HDR WeSLeY one, or
+    the remastered one. Which one?" """
+    told = options(paths)
+    options_said = ", ".join(told[:-1]) + ", or " + told[-1]
+    return line(config, "which", count=COUNTS.get(len(paths), str(len(paths))), name=name, options=options_said)
+
+
+def options(paths: list[str]) -> list[str]:
+    """Each file as Rigved names it when asking which: "the HDR WeSLeY one", "the one in multimedia"."""
+    return [f"the {difference} one" if not difference.startswith("in ") else f"the one {difference}"
+            for difference in names.differences([Path(path) for path in paths])]
+
+
+def on_desktop(step: Step, config: Config, log=print, dry_run: bool = False, confirmed: bool = False,
+               opened: list | None = None) -> tuple[bool, str]:
+    """Do something on the desktop (desk.py): what an app offers, a press, a setting, power, a window, a screenshot or
+    typing. What can't be undone (restart, shut down, log out, closing a window) waits for your yes: (done, said)."""
+    from . import desk
+
+    opened = [] if opened is None else opened
+    target = step.target.strip()
+    disruptive = (step.kind == "power" and any(name in target.lower() for name in desk.DISRUPTIVE)
+                  or step.kind == "window" and re.search(r"\bclose\b", target.lower()))
+    meant = ""
+    if step.kind == "window" and not re.match(r"(?:switch|go|change) to ", target.lower()):
+        meant = re.sub(r"^.*\bin ", "", target) if " in " in target else ""  # "close [window] in Chrome", on a yes
+        front = desk.look()["app"]
+        if not meant:
+            if front in HIDDEN_APPS or not front:  # the orb, or nothing it can see: not what "this window" means
+                return False, line(config, "cant")
+            meant = app_name(front)
+            target = f"{target} in {meant}"
+    if disruptive and not confirmed:
+        what = (target[0].upper() + target[1:] if step.kind == "power"
+                else f"Close {meant}" if step.kind == "window" else "Close this window")
+        opened.append({"kind": "confirm", "name": what, "thing": json.dumps([[step.kind, target]])})
+        return True, line(config, "sure", what=what)
+    if dry_run:
+        return True, f"({step.kind} {target})"
+    if step.kind == "window" and meant and not desk._same_app(desk.look()["app"], meant):
+        # the window asked about went behind: answering in the orb, or anything else, brought another to the front
+        if not desk.bring_forward(meant) or not desk._same_app(desk.look()["app"], meant):
+            return False, f"I couldn't get {meant} back in front, so I left it alone."
+        target = target.rsplit(" in ", 1)[0]
+    if step.kind == "app":
+        app, _, what = target.partition(":") if ":" in target else ("", "", target)
+        app = app_name(app.strip() or desk.look()["app"] or (conversation.last_opened() or {}).get("name", ""))
+        value, _, found = best(" ".join(words(app)), apps()) if app else (0.0, "", None)
+        name, file = found if value >= 0.8 and found else (app, None)
+        what = " ".join(word for word in words(what) if word not in set(words(name)) | {"app"}) or what
+        ok, how = desk.do_in_app(name, what, file, log)
+        return ok, line(config, "did", what=f"{how} in {name}".strip()) if ok else line(config, "not found", target=what, app=name or "the app in front")
+    if step.kind == "press":
+        pressed = desk.press(target)
+        if pressed.get("ok"):
+            return True, line(config, "did", what=pressed.get("pressed", target))
+        app = desk.look()["app"]
+        if desk.JETBRAINS.search(app):
+            ok, how = desk.do_in_app(app, target, None, log)
+            return ok, line(config, "did", what=how) if ok else line(config, "not found", target=target, app=app)
+        if re.search(r"\bmenu$", target.lower()) and (letter := re.sub(r"[^a-z]", "", target.lower())[:1]):
+            return desk.keys(f"alt+{letter}"), line(config, "did", what=target)  # "the file menu": Alt+F
+        log(f"press {target!r}: {pressed.get('why')}; nearest {pressed.get('near')}")
+        return False, line(config, "not found", target=target, app=app or "the app in front")
+    if step.kind == "setting":
+        ok, reply = desk.setting(target)
+        if not ok and not reply and target.lower() != "undo":  # no setting by that name: "power mode battery saver"
+            from . import machine
+
+            return machine.do(target, config, log, opened)
+        return ok, reply or line(config, "cant")
+    if step.kind == "power":
+        ok, which = desk.power(target)
+        return ok, line(config, "did", what=which.capitalize()) if ok else line(config, "cant")
+    if step.kind == "window":
+        ok, which = desk.window(target)
+        return ok, line(config, "did", what=which.capitalize()) if ok else line(config, "cant")
+    if step.kind == "screenshot":
+        return (True, line(config, "screenshot")) if desk.screenshot(target) else (False, line(config, "broke"))
+    if step.kind == "type":
+        return (True, line(config, "typed")) if desk.type_text(target) else (False, line(config, "broke"))
+    return False, line(config, "cant")
 
 
 def find_file(description: str, config: Config) -> str:
@@ -427,11 +717,36 @@ def launch(*command: str) -> None:
     subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 
-def open_thing(kind: str, thing: str) -> None:
+def open_thing(kind: str, thing: str, app: str = "") -> None:
+    """Open it: an app, or anything else with what it opens in, or in `app` (its .desktop file) when one was named."""
     if kind == "app":
         launch("gio", "launch", thing)
+    elif app:
+        launch("gio", "launch", app, thing)
     else:
         launch("gio", "open", thing)
+
+
+PLAYS_IN = {".mkv": "vlc media player"}  # opened by voice in this app, whatever the desktop's default (you chose VLC)
+
+
+def player(path: str) -> tuple[str, Path] | None:
+    """The app a file opens in when you didn't name one: VLC for MKV films; None for the desktop's own choice."""
+    wanted = PLAYS_IN.get(Path(path).suffix.lower())
+    if not wanted:
+        return None
+    value, _, app = best(wanted, apps())
+    return app if value >= 0.8 else None
+
+
+def with_app(target: str) -> tuple[str, tuple[str, Path] | None]:
+    """What to open and the app named to open it in: "mirzapur in vlc media player" → ("mirzapur", ("VLC media
+    player", its .desktop file)); the target as it was and None when no app is named."""
+    match = re.fullmatch(r"(.+)\s+(?:in|with|using|on)\s+(.+)", target, re.IGNORECASE)
+    if not match:
+        return target, None
+    value, _, app = best(" ".join(words(match.group(2))), apps())
+    return (match.group(1), app) if value >= 0.8 else (target, None)
 
 
 def players() -> list[str]:
@@ -550,28 +865,33 @@ def _speakers_full(apps: list[str]) -> None:
 
 PERSONAS = {
     "witty": {
-        "about": "a quick-witted, supremely confident genius with dry humour and playful sarcasm, like a brilliant "
-                 "inventor's AI sidekick: warm underneath, never mean",
+        "about": "a warm, easygoing friend who happens to be brilliant: quick, playful and lightly funny, genuinely "
+                 "interested in the person and glad to help, like a good-natured sidekick. Humour is gentle and never "
+                 "at their expense; no sarcasm about them, their files or their questions",
         "speed": 1.05,
-        "looking": ["Let me dig through your files.", "Checking your files, one sec.", "Give me a second to look."],
-        "greet": ["Talk to me.", "I'm all ears. Well, all microphone.", "Yeah? What are we building today?",
-                  "Go ahead, make it interesting."],
-        "done": ["Done.", "Consider it handled.", "Easy."],
-        "unsure": ["Didn't catch that. Run it by me again?", "Missed that one. Again, maybe slower?"],
-        "cant": ["That one's beyond me for now. Give me a few upgrades.", "Can't do that yet. Soon, though."],
-        "bye": ["Fine. I'll be here, being brilliant.", "Going quiet. Call me when you need a genius."],
-        "broke": "Something broke. Not my fault, probably.",
-        "folder": "{name}, open. Try not to judge the clutter.", "app": "{name}, up and running.",
-        "website": "{name}, coming right up.", "file": "Found it: {name}.",
-        "missing": "I looked everywhere. No {target}. Are we sure that exists?",
-        "no file": "Went through every file you own. No sign of {target}.",
-        "search": "Asking the internet about {target}. Brace yourself.",
-        "web": ["Looking that up.", "One sec, checking the internet.", "Let me look into that."],
-        "no music": "Nothing's playing. I can't pause silence.",
-        "no sound": "Nothing's making any sound to turn. I'm always at full volume.",
-        "no answer": "Your files have nothing on that. Shocking, I know.",
+        "looking": ["Let me have a look through your files.", "One sec, checking your files.", "Give me a moment, I'll find it."],
+        "greet": ["Hey {you}, what's up?", "I'm here. What can I do for you?", "Hey! What are we up to?",
+                  "Go ahead, I'm listening.", "Yes, {you}?"],
+        "done": ["Done.", "All set.", "There you go."],
+        "unsure": ["Sorry, I didn't quite catch that. Say it once more?", "I missed that one. Mind saying it again?"],
+        "cant": ["I can't do that one yet, sorry. I'm learning, though.", "That's not something I can do yet. Soon, I hope."],
+        "bye": ["Okay, I'll be right here if you need me.", "Going quiet. Just call when you want me."],
+        "broke": "Hmm, something went wrong on my end. Want to try that again?",
+        "folder": "Here's your {name} folder.", "app": "{name} is opening.",
+        "website": "Opening {name} for you.", "file": "Found it: {name}.",
+        "missing": "I couldn't find anything called {target}. Is it called something else, maybe?",
+        "no file": "I looked through all your files and couldn't find {target}, sorry.",
+        "which": "I found {count} of {name}: {options}. Which one would you like?",
+        "search": "Searching the web for {target}.",
+        "web": ["Let me look that up.", "One sec, checking.", "Good question, let me find out."],
+        "no music": "Nothing's playing right now, so there's nothing to pause.",
+        "no sound": "Nothing's making any sound at the moment.",
+        "no answer": "I couldn't find anything about that in your files, sorry.",
         "time": "It's {time}.", "date": "It's {date}.",
-        "fresh": ["Wiped. Clean slate.", "Forgotten. What's next?"],
+        "fresh": ["Okay, fresh start.", "Sure, let's start over. What's next?"],
+        "did": ["{what}. Done.", "{what}, all set."], "sure": "{what}? Just say yes and I'll do it.",
+        "cancelled": ["Okay, I'll leave it.", "No problem, leaving it as it is."], "not found": "I can't find {target} in {app}.",
+        "screenshot": "Got it. The screenshot's in Pictures and on your clipboard.", "typed": "Typed it in.",
     },
     "sage": {
         "about": "a wise and gentle Indian sage who speaks calmly, warmly and simply, sometimes with an image from "
@@ -590,6 +910,7 @@ PERSONAS = {
         "website": "The path to {name} is open.", "file": "I have found it: {name}.",
         "missing": "I searched far and wide, but found nothing called {target}.",
         "no file": "I looked through all your writings, but {target} is not among them.",
+        "which": "I find {count} of {name}, my child: {options}. Which shall it be?",
         "search": "I have asked the wide world about {target}.",
         "web": ["Let me consult the wide world, my child.", "A moment. I shall seek this out."],
         "no music": "No music plays that I could guide.",
@@ -597,6 +918,9 @@ PERSONAS = {
         "no answer": "My child, your writings are silent on this.",
         "time": "The hour is {time}.", "date": "Today is {date}.",
         "fresh": ["It is forgotten. We begin anew.", "Like footprints in the tide, it is gone."],
+        "did": "{what}. It is done.", "sure": "{what}, my child? Say yes, and it shall be done.",
+        "cancelled": "Very well. We leave it be.", "not found": "I do not see {target} in {app}, my child.",
+        "screenshot": "I have captured the screen. It rests in your Pictures.", "typed": "It is written.",
     },
 }
 
@@ -606,17 +930,29 @@ def persona(config: Config) -> dict:
 
 
 def line(config: Config, key: str, **values: str) -> str:
-    """What the persona says for `key`: one of its variations, with the names filled in."""
+    """What the persona says for `key`: one of its variations, with the names filled in ({you}: your first name)."""
     said = persona(config)[key]
-    return (random.choice(said) if isinstance(said, list) else said).format(**values)
+    return (random.choice(said) if isinstance(said, list) else said).format(you=first_name(config) or "there", **values)
+
+
+def first_name(config: Config) -> str:
+    return config.owner_name.split()[0] if config.owner_name.strip() else ""
+
+
+def about(config: Config) -> str:
+    """Who Rigved is and who it's talking to, for the model that speaks for it."""
+    name = first_name(config)
+    return (persona(config)["about"] + (f". You're talking with {name} ({config.owner_name}), whose computer this is; "
+            f"call them {name} now and then, as a friend would, not in every reply" if name else ""))
 
 
 def spoken_reply(config: Config, prompt: str) -> str:
     from . import llm
 
-    intro = (f"You are Rigved, the personal AI living in this computer, {persona(config)['about']}. You are being heard, "
+    intro = (f"You are Rigved, the personal AI living in this computer, {about(config)}. You are being heard, "
              "not read: reply in one to three short sentences, with no lists, markdown, emoji or file paths. "
-             "Answer the latest message; never repeat an earlier reply.")
+             "Answer the latest message; never repeat an earlier reply."
+             + (f" What you've learned about them in earlier conversations:\n{notes.described()}" if notes.described() else ""))
     history = [{"role": "system", "content": intro}, *conversation.messages()]
     reply = llm.quick(config.ollama, config.model, prompt, timeout=120, history=history)
     return re.sub(r"<think>.*?</think>|[*_#`]", "", reply, flags=re.S).strip()
@@ -636,24 +972,126 @@ def answer(question: str, config: Config) -> str:
                                 "don't cover, answer it anyway, briefly.\n\n" + context + "\n\nQUESTION: " + question)
 
 
-def talk(said: str, config: Config, log=print, searching=lambda: None, private: list | None = None) -> str:
+COMMAND_WORDS = {"click", "scroll", "tab", "number", "open", "close", "turn", "switch", "set", "make", "start", "stop", "restart", "quit", "kill", "delete",
+                 "trash", "remove", "move", "rename", "install", "uninstall", "show", "hide", "play", "pause", "resume",
+                 "mute", "unmute", "connect", "disconnect", "put", "empty", "minimize", "maximize", "lock", "press", "type",
+                 "find", "search", "launch", "run", "change", "enable", "disable", "go", "take", "undo", "check"}
+
+
+class HeadStart:
+    """Claude, started on what was said while the local model is still working out what it is (0.5 s): if it's
+    conversation, the reply is already on its way; if it's a command, it's stopped. Never for what the rules
+    understand, a command, or anything about you ("my lease" is answered from your files and never leaves here)."""
+
+    END = object()
+
+    def __init__(self, said: str, config: Config) -> None:
+        from . import claude
+
+        self.said, self.parts, self.process = said, queue.Queue(), None
+        self.searched, self.stopped = threading.Event(), threading.Event()
+        self.on_search = lambda: None  # who to tell of a web search, once the reply is taken up
+        self.reply: str | None = None
+        self.error: Exception | None = None
+        self.noted: list[tuple[str, str]] = []  # REMEMBER, FORGET and DO lines, for talk()
+
+        def run() -> None:
+            try:
+                self.reply = claude.reply(said, conversation.transcript(public=True), about(config), config.claude_model,
+                                          self._searching, sentence=self.parts.put, started=self._started,
+                                          noted=lambda kind, text: self.noted.append((kind, text)), notes=notes.described())
+            except Exception as error:  # ClaudeError, or stopped
+                self.error = error
+            self.parts.put(self.END)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _searching(self) -> None:
+        self.searched.set()
+        self.on_search()
+
+    def _started(self, process) -> None:
+        self.process = process
+        if self.stopped.is_set():
+            process.kill()
+
+    def stop(self) -> None:
+        """Not wanted after all (or finished): end it."""
+        self.stopped.set()
+        if self.process is not None and self.process.poll() is None:
+            self.process.kill()
+
+    @classmethod
+    def maybe(cls, said: str, config: Config) -> "HeadStart | None":
+        first = (words(said) or [""])[0]
+        if (not config.claude_model or personal(said) or first in COMMAND_WORDS or parse(said) is not None
+                or conversation.asking() is not None):
+            return None
+        return cls(said, config)
+
+
+def talk(said: str, config: Config, log=print, searching=lambda: None, private: list | None = None,
+         sentence=None, head: HeadStart | None = None, act=None) -> str:
     """A reply in character: from Claude when it's set up (see claude.py), else, or if Claude can't be had, locally.
     Claude hands back what only your files can answer, and they're searched here (and `private` is told). Claude
-    hears the conversation without the turns answered from your files."""
+    hears the conversation without the turns answered from your files, and what Rigved has learned about you. With
+    `sentence`, Claude's reply is handed to it sentence by sentence as it's written; what's returned is then what was
+    said. When Claude works out that a command was meant ("where's the orb?" → start the orb), `act(command)` does it
+    and its reply is Rigved's."""
     if config.claude_model:
         from . import claude
 
+        told: list[str] = []
+        noted: list[tuple[str, str]] = []
+
+        def tell(part: str) -> None:
+            told.append(part)
+            sentence(part)
+
         try:
-            reply = claude.reply(said, conversation.transcript(public=True), persona(config)["about"], config.claude_model,
-                                 searching)
+            if head is not None:  # already on its way: say what it has written, then the rest as it comes
+                head.on_search = searching
+                if head.searched.is_set():
+                    searching()
+                for part in iter(head.parts.get, HeadStart.END):
+                    if sentence:
+                        tell(part)
+                if head.error is not None:
+                    raise head.error if isinstance(head.error, claude.ClaudeError) else claude.ClaudeError(str(head.error))
+                reply, noted = head.reply or "", head.noted
+            else:
+                reply = claude.reply(said, conversation.transcript(public=True), about(config), config.claude_model,
+                                     searching, sentence=tell if sentence else None,
+                                     noted=lambda kind, text: noted.append((kind, text)), notes=notes.described())
+            meant = learn(noted, log)
+            if meant and act is not None and not told:
+                log(f"Claude worked out what was meant: {meant!r}")
+                return act(meant)
             if reply != claude.FILES:
-                return reply
+                return " ".join(told) or reply or line(config, "done")
             if private is not None:
                 private.append(True)
             return answer(said, config)
         except claude.ClaudeError as error:
+            if told:  # it stopped partway: what was said stands
+                log(f"Claude stopped partway ({error}).")
+                return " ".join(told)
             log(f"Claude couldn't answer ({error}); answering locally.")
     return spoken_reply(config, "They said: " + said)
+
+
+def learn(noted: list[tuple[str, str]], log=print) -> str:
+    """Keep what Claude noted to remember or forget (notes.py); the command it worked out was meant, if any."""
+    meant = ""
+    for kind, text in noted:
+        if kind == "REMEMBER":
+            notes.add(text)
+            log(f"Learned: {text}")
+        elif kind == "FORGET":
+            log(f"Forgot: {text}" if notes.forget(text) else f"Nothing to forget about: {text}")
+        elif kind == "DO" and not meant:
+            meant = text.strip().strip('"')
+    return meant
 
 
 FIRST_PERSON = {"i", "i'm", "i've", "i'd", "i'll", "my", "mine", "myself", "our", "ours", "we", "we're", "us"}
@@ -677,9 +1115,15 @@ def spoken_name(name: str) -> str:
 
 
 def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = False, opened: list[dict] | None = None,
-              searching=lambda: None, private: list | None = None) -> str:
+              searching=lambda: None, private: list | None = None, sentence=None, confirmed: bool = False,
+              head: HeadStart | None = None, relayed: bool = False) -> str:
     """Do each step and return what Rigved says about it all. What it opens is added to `opened`, for "open it" later;
-    `searching` is told when an answer has to wait on the web, `private` when one came from your files."""
+    `searching` is told when an answer has to wait on the web, `private` when one came from your files. With
+    `sentence`, a reply that is all Claude's is handed to it sentence by sentence as it's written."""
+
+    def relay(command: str) -> str:  # what Claude worked out was meant: carried out here, once (no asking Claude again)
+        return carry_out(understand(command, config), config, log, dry_run, opened, searching, private, relayed=True)
+
     private = [] if private is None else private
     opened = [] if opened is None else opened
     said: list[str] = []
@@ -688,8 +1132,14 @@ def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = Fals
     for step in steps:
         if step.kind == "stop":
             return line(config, "bye")
-        if step.kind == "unknown" and meaningful(step.target) and len(words(step.target)) > 1:
-            said.append(line(config, "cant"))  # heard it fine; it's something Rigved can't do yet ("reboot the system")
+        if step.kind == "unknown" and meaningful(step.target) and len(words(step.target)) > 1 and config.claude_model \
+                and not relayed:
+            # heard fine, but what's meant isn't clear here ("I'm in the floating orb"): Claude, with the
+            # conversation, gets what was meant, says it, or works out the command to carry out
+            said.append(talk(step.target, config, log, searching, private, sentence if len(steps) == 1 else None,
+                             head if len(steps) == 1 else None, act=relay) if not dry_run else "(a reply in character)")
+        elif step.kind == "unknown" and meaningful(step.target) and len(words(step.target)) > 1:
+            said.append(line(config, "cant"))  # heard it fine; it's something Rigved can't do yet
         elif step.kind == "unknown" or (not step.target and step.kind in ("open", "find", "search", "ask", "talk", "volume", "media")):
             said.append(line(config, "unsure"))
         elif step.kind == "time":
@@ -710,22 +1160,37 @@ def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = Fals
             if not last and len(parts) > 1 and all(resolve(part, config, files=False)[0] for part in parts):
                 steps.extend(Step("open", part) for part in parts)  # "google drive and google chrome": no file search
                 continue
-            kind, name, thing = (last["kind"], last["name"], last["thing"]) if last else resolve(step.target, config)
+            rest, app = with_app(step.target) if not last else (step.target, None)
+            kind, name, thing = (last["kind"], last["name"], last["thing"]) if last else resolve(rest, config)
+            if app and kind not in ("file", "choices"):  # "youtube in chrome" is still a website
+                app = None
+                kind, name, thing = resolve(step.target, config)
             if not kind and " and " in step.target:  # "open fidelity.com and google chrome": two things
                 steps.extend(Step("open", part) for part in step.target.split(" and "))
                 continue
             log(f"open {step.target!r} → {kind or 'nothing'} {thing}")
+            if kind == "choices":
+                said.append(which(name, thing.split("\n"), config))
+                opened.append({"kind": kind, "name": name, "thing": thing, **({"app": app[0]} if app else {})})
+                continue
             if not kind:
                 said.append(line(config, "missing", target=step.target))
                 failed = True
                 continue
             if not dry_run:
-                open_thing(kind, thing)
+                opener = app or (player(thing) if kind == "file" else None)
+                open_thing(kind, thing, str(opener[1]) if opener else "")
             opened.append({"kind": kind, "name": name, "thing": thing})
             done = True
-            said.append(line(config, kind, name=spoken_name(name) if kind == "file" else name))
+            said.append(line(config, kind, name=(names.spoken(thing) + (f" in {app[0]}" if app else "")) if kind == "file" else name))
         elif step.kind == "find":
-            found = find_file(step.target, config)
+            meant = names.meant(names.matches(step.target))
+            if len(meant) > 1:
+                paths = [str(match.path) for match in meant]
+                said.append(which(names.spoken(paths[0]), paths, config))
+                opened.append({"kind": "choices", "name": names.spoken(paths[0]), "thing": "\n".join(paths)})
+                continue
+            found = str(meant[0].path) if meant else find_file(step.target, config)
             if found and Path(found).suffix.lower() in MEDIA and not named(step.target, found):
                 found = ""  # a film found by its subtitles plays in VLC, which can take the speakers for itself
             log(f"find {step.target!r} → {found or 'nothing'}")
@@ -734,10 +1199,11 @@ def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = Fals
                 failed = True
                 continue
             if not dry_run:
-                open_thing("file", found)
+                opener = player(found)
+                open_thing("file", found, str(opener[1]) if opener else "")
             opened.append({"kind": "file", "name": Path(found).name, "thing": found})
             done = True
-            said.append(line(config, "file", name=spoken_name(Path(found).name)))
+            said.append(line(config, "file", name=names.spoken(found)))
         elif step.kind == "search":
             if not dry_run:
                 launch("gio", "open", "https://www.google.com/search?q=" + re.sub(r"\s+", "+", step.target))
@@ -747,7 +1213,9 @@ def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = Fals
             private.append(True)
             said.append(answer(step.target, config) if not dry_run else "(an answer from your files)")
         elif step.kind in ("ask", "talk"):  # a question about the world rather than you goes to Claude, when it's set up
-            said.append(talk(step.target, config, log, searching, private) if not dry_run else "(a reply in character)")
+            said.append(talk(step.target, config, log, searching, private, sentence if len(steps) == 1 else None,
+                             head if len(steps) == 1 else None, act=None if relayed else relay)
+                        if not dry_run else "(a reply in character)")
         elif step.kind == "volume":
             if not dry_run and not volume(step.target):
                 said.append(line(config, "no sound"))
@@ -760,7 +1228,41 @@ def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = Fals
                 failed = True
                 continue
             done = True
-    if done and not failed and not said and all(step.kind in ("media", "volume") for step in steps):
+        elif step.kind == "yes":  # what Rigved asked about ("restart?"), now that you said yes
+            inner = [Step(kind, target) for kind, target in json.loads(step.target)]
+            said.append(carry_out(inner, config, log, dry_run, opened, searching, private, confirmed=True))
+            done = True
+        elif step.kind == "run":  # what Rigved asked about exactly, after your yes; only ever from a "confirm"
+            from . import machine
+
+            ok, reply = machine.carry(json.loads(step.target), log) if not dry_run else (True, "(done)")
+            said.append(reply)
+            done, failed = done or ok, failed or not ok
+        elif step.kind == "cancel":
+            said.append(line(config, "cancelled"))
+        elif step.kind == "check":  # read-only commands, read by the local model: nothing about this computer leaves it
+            from . import machine
+
+            private.append(True)
+            said.append(machine.check(step.target, config, log) if not dry_run else "(what the computer says)")
+        elif step.kind == "browse":  # through Rigveda's extension in Chrome (browser.py)
+            from . import browser
+
+            ok, reply = browser.browse(step.target, config, log, opened, confirmed) if not dry_run else (True, "(done)")
+            if reply:  # a scroll or "go back" you see happen: nothing to say
+                said.append(reply)
+            done, failed = done or ok, failed or not ok
+        elif step.kind == "do":
+            from . import machine
+
+            ok, reply = machine.do(step.target, config, log, opened) if not dry_run else (True, "(done)")
+            said.append(reply)
+            done, failed = done or ok, failed or not ok
+        elif step.kind in DESKTOP:
+            ok, reply = on_desktop(step, config, log, dry_run, confirmed, opened)
+            said.append(reply)
+            done, failed = done or ok, failed or not ok
+    if done and not failed and not said and all(step.kind in ("media", "volume", "browse") for step in steps):
         return ""  # pausing a film or turning it up needs no words over it, just the tone
     if done and not failed and config.persona == "sage":  # "Tathaastu" before the news; the witty one just gets on with it
         said.insert(0, line(config, "done"))

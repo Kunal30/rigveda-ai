@@ -95,6 +95,9 @@ class Orb(Gtk.Window):
         self.move(*self.home)
         self.connect("configure-event", self.remember)
         self.connect("destroy", Gtk.main_quit)
+        # Alt+F4 isn't how the orb is closed (Quit in its panel is): it once got a "close this window" meant for
+        # the window behind, after the orb's Yes button had brought it to the front (2026-10-30).
+        self.connect("delete-event", lambda *_: True)
         self.pointer = None
         self.target = (*self.home, self.orb, self.orb)  # where the window should be and how big, to put it back after a reset
         self.frame, self.stalled, self.stuck = -1, 0, False

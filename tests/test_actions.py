@@ -116,9 +116,9 @@ def test_resolving_names(desktop: Path, spoken: str, kind: str, name: str) -> No
 def test_replies_without_doing_anything(desktop: Path) -> None:
     reply = actions.carry_out([Step("open", "chrome"), Step("open", "fidelity")], Config(), log=lambda message: None,
                               dry_run=True)
-    assert reply == "Google Chrome, up and running. Fidelity, coming right up."
+    assert reply == "Google Chrome is opening. Opening Fidelity for you."
     assert actions.carry_out([Step("open", "nowhere land")], Config(), log=lambda message: None, dry_run=True) == \
-        "I looked everywhere. No nowhere land. Are we sure that exists?"
+        "I couldn't find anything called nowhere land. Is it called something else, maybe?"
     assert actions.carry_out([Step("stop"), Step("open", "chrome")], Config(), dry_run=True) in actions.PERSONAS["witty"]["bye"]
     sage = Config(persona="sage")
     assert actions.carry_out([Step("open", "chrome")], sage, log=lambda message: None, dry_run=True).endswith(
@@ -153,7 +153,7 @@ def test_mishearings(command: str, steps: list[Step]) -> None:
 
 def test_open_x_and_y_opens_both(desktop: Path) -> None:
     reply = actions.carry_out([Step("open", "fidelity and google chrome")], Config(), log=lambda message: None, dry_run=True)
-    assert reply == "Fidelity, coming right up. Google Chrome, up and running."
+    assert reply == "Opening Fidelity for you. Google Chrome is opening."
     assert actions.resolve("apple music in google chrome", Config())[:2] == ("website", "Apple Music")
 
 
@@ -173,9 +173,9 @@ def test_voice_history_is_private_and_trimmed(tmp_path: Path, monkeypatch: pytes
 def test_find_never_plays_a_film_it_only_found_by_its_words(desktop: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     quiet = lambda message: None
     monkeypatch.setattr(actions, "find_file", lambda description, config: "/films/Killers.Of.The.Flower.Moon.2023.mkv")
-    assert actions.carry_out([Step("find", "details")], Config(), log=quiet, dry_run=True).startswith("Went through every file")
+    assert actions.carry_out([Step("find", "details")], Config(), log=quiet, dry_run=True).startswith("I looked through all your files")
     assert actions.carry_out([Step("find", "flower moon")], Config(), log=quiet, dry_run=True) == \
-        "Found it: Killers Of The Flower Moon 2023."
+        "Found it: Killers Of The Flower Moon (2023)."
     monkeypatch.setattr(actions, "find_file", lambda description, config: "/docs/lease.pdf")
     assert actions.carry_out([Step("find", "apartment details")], Config(), log=quiet, dry_run=True) == "Found it: lease."
 
@@ -213,3 +213,26 @@ def test_volume_turns_the_apps_not_rigved_and_keeps_the_speakers_full(monkeypatc
     assert levels == {"@DEFAULT_AUDIO_SINK@": 1.0, "84": 0.6}  # Rigved's own stream (91) never touched
     streams.pop(0)
     assert actions.volume("up") is False  # nothing but Rigved: nothing to turn
+
+
+def test_volume_or_music_needs_words_for_it(monkeypatch) -> None:
+    from rigveda import llm
+
+    reply = '{"steps": [{"action": "volume", "target": "up"}, {"action": "volume", "target": "100"}, {"action": "media", "target": "play"}]}'
+    monkeypatch.setattr(llm, "quick", lambda *args, **kwargs: reply)
+    assert actions.understand("okay can you hear me now", Config()) == [Step("talk", "okay can you hear me now")]
+    assert actions.understand("crank that all the way and play", Config())[-1] == Step("media", "play")
+
+
+def test_a_greeting_in_your_voice_is_for_rigved(monkeypatch):
+    from rigveda import llm
+
+    monkeypatch.setattr(llm, "quick", lambda *a, **k: '{"for_rigved": false}')  # the model's verdict that morning
+    for said in ("Good morning.", "I said good morning.", "Good night, Rigved.", "I'm back"):
+        assert actions.addressed(said, None)
+
+
+def test_rigved_knows_your_name_without_looking_in_your_files() -> None:
+    config = Config(owner_name="Kunal Vinay Kumar Suthar")
+    assert actions.understand("What's my name likely?", config) == [actions.Step("talk", "what's my name likely")]
+    assert "talking with Kunal" in actions.about(config) and "{you}" not in actions.line(config, "greet")
