@@ -314,6 +314,14 @@ header{display:flex;align-items:center;gap:12px;padding:2px 4px 12px;border-bott
   background:linear-gradient(160deg,#04101c,#020810);box-shadow:0 0 30px rgba(94,231,255,.15);animation:open .25s cubic-bezier(.2,.9,.3,1.2);z-index:2}
 #voicelog.on{display:flex}#vlist{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:6px 2px;scrollbar-width:thin;scrollbar-color:var(--cyan-dim) transparent;user-select:text}
 #vask{margin-top:6px}  /* otherwise styled like the main chat box */
+#choices{position:absolute;inset:70px 10px auto;display:none;flex-direction:column;gap:8px;border:1px solid var(--cyan);border-radius:16px;padding:12px;
+  background:linear-gradient(160deg,#04101c,#020810);box-shadow:0 0 30px rgba(94,231,255,.25);animation:open .25s cubic-bezier(.2,.9,.3,1.2);z-index:3}
+#choices.on{display:flex}#choices p{margin:0;font-size:13.5px;line-height:1.45}#choices .hint{font-size:11px;color:var(--muted)}
+#choices .pick{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;cursor:pointer;border-radius:12px;padding:9px 12px;
+  background:rgba(94,231,255,.06);border:1px solid var(--cyan-dim);color:var(--text);font:600 13.5px var(--sans)}
+#choices .pick:hover,#choices .pick:focus-visible{background:rgba(94,231,255,.16);border-color:var(--cyan);outline:0}
+#choices .pick small{font:400 10.5px var(--mono);color:var(--muted);word-break:break-all}#choices .pick:disabled{opacity:.5;cursor:wait}
+#choices .later{align-self:flex-end;background:none;border:0;color:var(--muted);font:600 11px var(--sans);letter-spacing:.08em;text-transform:uppercase;cursor:pointer;padding:4px}
 #vlist time{align-self:center;font:10px var(--mono);color:var(--muted);margin-top:4px}#vlist .did{align-self:flex-start;font:10px var(--mono);color:var(--muted);margin:-4px 0 0 4px}
 #drawer.on,#activity.on{display:flex}.dhead{display:flex;align-items:center;gap:8px}.dhead button,.tabs button{font:600 11px var(--sans);letter-spacing:.12em;text-transform:uppercase;cursor:pointer;border-radius:9px;padding:6px 10px}
 .dhead .back{background:none;border:1px solid var(--cyan-dim);color:var(--cyan)}.tabs{display:flex;gap:4px;margin-left:auto}.tabs button{background:none;border:1px solid transparent;color:var(--muted)}.tabs button.on{color:var(--text);border-color:var(--cyan);background:var(--cyan-faint)}
@@ -382,6 +390,9 @@ footer{display:flex;justify-content:space-between;margin-top:9px;padding:0 22px;
 <div id="voicelog" role="dialog" aria-label="What you said to Rigved"><div class="dhead"><button id="vback" class="back">← Back</button><h3>Voice</h3></div>
 <div class="dsum" id="vsum">Reading your conversations…</div><div id="vlist"></div>
 <form id="vask"><input id="vq" placeholder="Type to Rigved: open Downloads, what time is it…" autocomplete="off" aria-label="Type a command for Rigved"><button id="vsend" aria-label="Send to Rigved">➜</button></form></div>
+<div id="choices" role="dialog" aria-label="Rigved is asking you"><div class="dhead"><h3 id="chtitle">Which one?</h3></div>
+<p id="chq"></p><div id="chlist" style="display:flex;flex-direction:column;gap:6px"></div><span class="hint">Click one, or just say it.</span>
+<button id="chlater" class="later">Not now</button></div>
 <div id="activity" role="dialog" aria-label="What Rigveda is doing"><div class="dhead"><button id="aback" class="back">← Back</button><h3>Activity</h3></div>
 <div class="dsum" id="asum">Reading activity…</div><div class="scroll"><div id="stages"></div>
 <div class="label" id="feed-label" style="margin-top:10px">Just read from Google Drive</div><div class="feed" id="feed"></div>
@@ -476,6 +487,26 @@ $('vask').addEventListener('submit',async e=>{e.preventDefault();const text=$('v
   finally{vbusy=false;$('vsend').disabled=false;$('vq').focus();voiceSeen=-1;voices()}});
 $('voice-link').onclick=showVoice;$('vback').onclick=closeVoice;$('close').addEventListener('click',closeVoice);
 addEventListener('keydown',e=>{if(e.key==='Escape'&&$('voicelog').classList.contains('on')){e.stopImmediatePropagation();closeVoice()}},true);
+// Which one: when Rigved asks which of several files you meant, the orb opens with them as buttons. Click one, or
+// answer by voice; either way the card goes once it's answered, and the orb shrinks back if it opened for this.
+let asked=0,dismissed=0,popped=false,choosing=false;
+async function checkChoices(){if(choosing)return;let a;try{a=(await (await fetch('/api/choices')).json()).asking}catch{return}
+  if(!a){if(asked)closeChoices();return}
+  if(a.at===asked||a.at===dismissed)return;asked=a.at;
+  const sure=a.kind==='confirm';$('chtitle').textContent=sure?'Are you sure?':'Which one?';
+  $('chq').textContent=sure?`${a.name}?`:`You've got ${a.options.length} of ${a.name}${a.app?`, to open in ${a.app}`:''}.`;
+  $('chlist').replaceChildren(...a.options.map((o,i)=>{const b=el('button','pick');b.append(el('span',null,o.label.replace(/^the /,'').replace(/^./,c=>c.toUpperCase())));if(o.file)b.append(el('small',null,o.file));
+    b.onclick=()=>choose(i,b);return b}));
+  if(document.body.className!=='panel'){popped=true;expand()}
+  $('choices').classList.add('on');setTimeout(()=>$('chlist').firstChild?.focus(),260)}
+async function choose(i,b){choosing=true;for(const x of $('chlist').children)x.disabled=true;b.lastChild.textContent='On it…';
+  try{const r=await fetch('/api/choose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:i})});const d=await r.json();
+    $('chq').textContent=d.said||d.error||'Done.'}catch{$('chq').textContent='The local server could not pass that on.'}
+  setTimeout(()=>{choosing=false;closeChoices()},1600)}
+function closeChoices(){$('choices').classList.remove('on');asked=0;if(popped){popped=false;collapse()}}
+$('chlater').onclick=()=>{dismissed=asked;closeChoices()};
+addEventListener('keydown',e=>{if(e.key==='Escape'&&$('choices').classList.contains('on')){e.stopImmediatePropagation();dismissed=asked;closeChoices()}},true);
+checkChoices();setInterval(checkChoices,1000);
 // Voice: the listener's state and loudness, passed in by the window (orb.py) as voice(state, level). The orb pops
 // when the microphone opens, swells and glows with your voice, spins while thinking and pulses as it answers.
 let vstate='idle',vlevel=0,glow=0;
@@ -611,6 +642,26 @@ class ServerConfig:
     token: str | None = None  # the browser extension's secret; form suggestions are off without one
 
 
+CHOSEN = ("first", "second", "third")
+
+
+def asking() -> dict | None:
+    """Rigved's open "which one?", for the orb to show as buttons: what it asked about, when, and each file as it named
+    it ("the remastered one") with the file's name; None when it isn't asking."""
+    from .actions import options
+
+    asked = conversation.asking()
+    if asked is None:
+        return None
+    if asked["kind"] == "confirm":  # "Restart?": yes or no
+        return {"kind": "confirm", "name": asked.get("name", ""), "at": asked.get("at", 0), "app": "",
+                "options": [{"label": "Yes, do it", "file": ""}, {"label": "No, leave it", "file": ""}]}
+    paths = asked["thing"].split("\n")[:len(CHOSEN)]
+    return {"kind": "choices", "name": asked.get("name", ""), "at": asked.get("at", 0), "app": asked.get("app", ""),
+            "options": [{"label": label, "file": Path(path).name, "folder": Path(path).parent.name}
+                        for label, path in zip(options(paths), paths)]}
+
+
 def make_handler(config: ServerConfig):
     class Handler(BaseHTTPRequestHandler):
         server_version = "RigvedaAI/0.1"
@@ -683,6 +734,29 @@ def make_handler(config: ServerConfig):
                 return
             try:
                 self.respond(HTTPStatus.OK, voice.send(text.strip()))
+            except (OSError, ValueError):
+                self.respond(HTTPStatus.SERVICE_UNAVAILABLE,
+                             {"error": "Rigved isn't listening. Start it with `systemctl --user start rigveda-listen`."})
+
+        def choose_post(self) -> None:
+            """One of the files Rigved asked about, clicked in the orb: said to the listener as "the second one", so it's
+            taken just as it would be by voice."""
+            from . import voice
+
+            if self.server.server_address[0] not in LOOPBACK and not self.authorized():
+                return
+            asked = conversation.asking()
+            try:
+                index = self.body().get("index")
+                count = 2 if asked and asked["kind"] == "confirm" else len(asked["thing"].split("\n")) if asked else 0
+                if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < count:
+                    raise ValueError
+            except (ValueError, json.JSONDecodeError):
+                self.respond(HTTPStatus.CONFLICT, {"error": "That question isn't open any more."})
+                return
+            try:
+                said = ("yes" if index == 0 else "no") if asked["kind"] == "confirm" else f"the {CHOSEN[index]} one"
+                self.respond(HTTPStatus.OK, voice.send(said))
             except (OSError, ValueError):
                 self.respond(HTTPStatus.SERVICE_UNAVAILABLE,
                              {"error": "Rigved isn't listening. Start it with `systemctl --user start rigveda-listen`."})
@@ -804,6 +878,9 @@ def make_handler(config: ServerConfig):
                 from .voice import muted
                 self.respond(HTTPStatus.OK, {"muted": muted()})
                 return
+            if self.path == "/api/choices":
+                self.respond(HTTPStatus.OK, {"asking": asking()})
+                return
             if self.path == "/api/activity":
                 con = connect(config.database)
                 try:
@@ -888,6 +965,9 @@ def make_handler(config: ServerConfig):
                 return
             if self.path == "/api/mute":
                 self.mute_post()
+                return
+            if self.path == "/api/choose":
+                self.choose_post()
                 return
             if self.path != "/api/chat":
                 self.respond(HTTPStatus.NOT_FOUND, {"error": "Not found"})

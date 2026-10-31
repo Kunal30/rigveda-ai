@@ -56,11 +56,11 @@ def test_claude_failures_are_errors(monkeypatch, tmp_path, events, returncode) -
 
 def test_talk_goes_to_claude_when_set_and_falls_back_locally(monkeypatch) -> None:
     monkeypatch.setattr(actions, "spoken_reply", lambda config, prompt: "local")
-    monkeypatch.setattr(claude, "reply", lambda said, history, about, model, searching: "from claude")
+    monkeypatch.setattr(claude, "reply", lambda said, history, about, model, searching, sentence=None: "from claude")
     assert actions.talk("hi", Config()) == "local"  # not set up: stays here
     assert actions.talk("hi", Config(claude_model="claude-sonnet-5-5")) == "from claude"
 
-    def broken(*args):
+    def broken(*args, **kwargs):
         raise claude.ClaudeError("limit reached")
 
     monkeypatch.setattr(claude, "reply", broken)
@@ -82,7 +82,7 @@ def test_questions_about_you_stay_on_this_computer(question, mine) -> None:
 
 def test_questions_go_to_claude_unless_theyre_about_you(monkeypatch) -> None:
     asked, searched = [], []
-    monkeypatch.setattr(claude, "reply", lambda said, *args: asked.append(said) or ("FILES" if "deposit" in said else "Because."))
+    monkeypatch.setattr(claude, "reply", lambda said, *args, **kwargs: asked.append(said) or ("FILES" if "deposit" in said else "Because."))
     monkeypatch.setattr(actions, "answer", lambda question, config: searched.append(question) or "From your files.")
     config = Config(claude_model="claude-sonnet-5-5")
     assert actions.carry_out([actions.Step("ask", "why do cats purr")], config) == "Because."
@@ -150,7 +150,7 @@ def test_claude_never_hears_what_was_answered_from_your_files(monkeypatch) -> No
     from rigveda import conversation
 
     heard = []
-    monkeypatch.setattr(claude, "reply", lambda said, talked, *args: heard.append(talked) or ("FILES" if "lease" in said else "Hi."))
+    monkeypatch.setattr(claude, "reply", lambda said, talked, *args, **kwargs: heard.append(talked) or ("FILES" if "lease" in said else "Hi."))
     monkeypatch.setattr(actions, "answer", lambda question, config: "It's on the lease.")
     config = Config(claude_model="claude-sonnet-5-5")
     for said, steps in [("what's my license number", [actions.Step("ask", "what's my license number")]),
@@ -163,3 +163,34 @@ def test_claude_never_hears_what_was_answered_from_your_files(monkeypatch) -> No
     assert heard[-1] == ""  # the license, the lease and nothing else had been said
     assert conversation.transcript(public=True) == "User: hey there\nRigved: Hi."
     assert "license" in conversation.transcript()  # the local model still follows up on it
+
+
+def delta(text):
+    return {"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": text}}}
+
+
+def block(kind=None):
+    return {"type": "stream_event", "event": {"type": "content_block_start", "content_block": {"type": kind}}} if kind \
+        else {"type": "stream_event", "event": {"type": "content_block_stop"}}
+
+
+def test_claudes_reply_is_handed_on_sentence_by_sentence_as_its_written(monkeypatch, tmp_path) -> None:
+    events = [block("text"), delta("Let me check"), delta(" that."), block(), block("tool_use"), block(),
+              block("text"), delta("**Antonelli** won"), delta(" in Austin. He started"), delta(" third."), block(),
+              answer("Antonelli won in Austin. He started third.")]
+    started = []
+    monkeypatch.setattr(claude, "WORKSPACE", tmp_path / "claude")
+    monkeypatch.setattr(claude.subprocess, "Popen", lambda command, **kwargs: started.append(command) or FakeClaude(events))
+    told, searched = [], []
+    said = claude.reply("who won the race", "", "witty", "claude-sonnet-5-5", lambda: searched.append(1), sentence=told.append)
+    assert told == ["Let me check that.", "Antonelli won in Austin.", "He started third."] and searched == [1]
+    assert said == "Antonelli won in Austin. He started third." and "--include-partial-messages" in started[0]
+
+
+def test_files_is_never_said_and_what_was_said_is_the_reply(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(claude, "WORKSPACE", tmp_path / "claude")
+    monkeypatch.setattr(claude.subprocess, "Popen", lambda command, **kwargs: FakeClaude([block("text"), delta("FILES"),
+                                                                                           block(), answer("FILES")]))
+    told = []
+    assert claude.reply("what's my lease deposit", "", "witty", "claude-sonnet-5-5", sentence=told.append) == "FILES"
+    assert told == []

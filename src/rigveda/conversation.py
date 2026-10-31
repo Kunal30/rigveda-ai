@@ -16,6 +16,7 @@ from pathlib import Path
 
 PATH = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "rigveda-conversation.json"
 TURNS = 6  # exchanges remembered
+CHOOSING = 120  # seconds Rigved's "which one?" stays open, whatever else is said meanwhile
 FRESH = 600  # seconds of quiet after which the conversation starts over
 LONGEST = 1_200  # characters kept of each thing said; a long answer's gist is enough to follow up on
 
@@ -76,8 +77,34 @@ def forget() -> None:
 def last_opened() -> dict | None:
     """The last thing Rigved opened in this conversation."""
     for turn in reversed(recent()):
-        if turn.get("opened"):
+        if turn.get("opened") and turn["opened"].get("kind") not in ("choices", "confirm"):
             return turn["opened"]
+    return None
+
+
+def choices() -> list[str]:
+    """The files Rigved just asked you to choose between, if you haven't chosen yet."""
+    asked = asking()
+    return asked["thing"].split("\n") if asked and asked["kind"] == "choices" else []
+
+
+def confirming() -> dict | None:
+    """What Rigved asked you to say yes to ("Restart?"), if you haven't answered: {"name": what it asked, "thing":
+    the steps, as JSON}."""
+    asked = asking()
+    return asked if asked and asked["kind"] == "confirm" else None
+
+
+def asking() -> dict | None:
+    """What Rigved asked you to choose between, if you haven't chosen yet: {"kind": "choices", "name", "thing" (the
+    files, a line each), "app" if they're to open in one, "at"}. A "which one?" stays open for CHOOSING seconds, even
+    if something else is said meanwhile ("uh…", or a misheard answer), until something is opened."""
+    for turn in reversed(recent()):
+        opened = turn.get("opened")
+        if opened and opened.get("kind") in ("choices", "confirm"):
+            return {**opened, "at": turn.get("at", 0)} if time.time() - turn.get("at", 0) <= CHOOSING else None
+        if opened:  # opened since: chosen, or moved on
+            return None
     return None
 
 
