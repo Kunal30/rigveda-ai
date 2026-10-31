@@ -536,8 +536,12 @@ class Listener:
         """Carry out a command and remember it; what was done, and what Rigved says about it. `before` is told the
         steps before they're carried out, `searching` when an answer has to wait on the web, `sentence` each sentence
         of a reply from Claude as it's written."""
+        head = actions.HeadStart.maybe(command, self.config) if sentence else None  # Claude starts while it's worked out
         try:
             steps = actions.understand(command, self.config)
+            if head is not None and not (len(steps) == 1 and steps[0].kind in ("talk", "ask", "unknown")):
+                head.stop()  # a command after all
+                head = None
             before(steps)
             self.log(f"{'Typed' if typed else 'Heard'}: {command!r} → "
                      f"{', '.join(f'{step.kind} {step.target!r}' for step in steps) or 'nothing'}")
@@ -545,7 +549,7 @@ class Listener:
             private: list = []  # answered from your files: kept from Claude
             options = {"sentence": sentence} if sentence else {}
             reply = actions.carry_out(steps, self.config, self.log, opened=opened, searching=searching, private=private,
-                                      **options)
+                                      head=head, **options)
             did = [f"{step.kind} {step.target}".strip() for step in steps]
             self.log(f"Said: {reply}")
             if not any(step.kind == "forget" for step in steps):
@@ -554,6 +558,9 @@ class Listener:
         except Exception as error:  # keep going whatever went wrong
             self.log(f"Couldn't do {command!r}: {type(error).__name__}: {error}")
             did, reply = [f"failed: {type(error).__name__}"], actions.line(self.config, "broke")
+        finally:
+            if head is not None:
+                head.stop()
         remember(command, did, reply, typed)
         return did, reply
 

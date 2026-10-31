@@ -56,7 +56,7 @@ def test_claude_failures_are_errors(monkeypatch, tmp_path, events, returncode) -
 
 def test_talk_goes_to_claude_when_set_and_falls_back_locally(monkeypatch) -> None:
     monkeypatch.setattr(actions, "spoken_reply", lambda config, prompt: "local")
-    monkeypatch.setattr(claude, "reply", lambda said, history, about, model, searching, sentence=None: "from claude")
+    monkeypatch.setattr(claude, "reply", lambda said, history, about, model, searching, sentence=None, **more: "from claude")
     assert actions.talk("hi", Config()) == "local"  # not set up: stays here
     assert actions.talk("hi", Config(claude_model="claude-sonnet-5-5")) == "from claude"
 
@@ -194,3 +194,95 @@ def test_files_is_never_said_and_what_was_said_is_the_reply(monkeypatch, tmp_pat
     told = []
     assert claude.reply("what's my lease deposit", "", "witty", "claude-sonnet-5-5", sentence=told.append) == "FILES"
     assert told == []
+
+
+def test_claude_starts_early_only_on_conversation(monkeypatch) -> None:
+    from rigveda import actions
+
+    monkeypatch.setattr(actions.HeadStart, "__init__", lambda self, said, config: setattr(self, "said", said))
+    config = Config(claude_model="sonnet")
+    assert actions.HeadStart.maybe("ugh, long day at work", config) is not None
+    assert actions.HeadStart.maybe("what's my lease deposit?", config) is None  # about you: never leaves here
+    assert actions.HeadStart.maybe("open a new terminal window", config) is None  # a command
+    assert actions.HeadStart.maybe("pause", config) is None  # the rules know it
+    assert actions.HeadStart.maybe("ugh, long day at work", Config()) is None  # no Claude set up
+
+
+def test_a_reply_started_early_is_said_as_it_comes_and_stopped_if_not_wanted(monkeypatch) -> None:
+    import threading
+
+    from rigveda import actions
+
+    go = threading.Event()
+    killed = []
+
+    class Process:
+        def poll(self):
+            return None
+
+        def kill(self):
+            killed.append(True)
+
+    def reply(said, conversation, about, model, searching=lambda: None, timeout=0, sentence=None, started=lambda p: None, **more):
+        started(Process())
+        sentence("Oh, that's rough.")
+        go.wait(5)
+        searching()
+        sentence("Want some music?")
+        return "Oh, that's rough. Want some music?"
+
+    monkeypatch.setattr(claude, "reply", reply)
+    config = Config(claude_model="sonnet")
+    head = actions.HeadStart.maybe("ugh, long day at work", config)
+    said, searched = [], []
+    threading.Timer(0.2, go.set).start()
+    out = actions.carry_out([actions.Step("talk", "ugh, long day at work")], config, log=lambda m: None,
+                            sentence=said.append, searching=lambda: searched.append(True), head=head)
+    assert said == ["Oh, that's rough.", "Want some music?"] and out == "Oh, that's rough. Want some music?"
+    assert searched == [True]  # a search after it was taken up still says "looking that up"
+    other = actions.HeadStart.maybe("tell me a joke", config)
+    other.stop()  # before or after its process starts: either way it's ended
+    for _ in range(50):
+        if killed:
+            break
+        threading.Event().wait(0.02)
+    assert killed
+
+
+def test_notes_and_commands_are_never_said_aloud() -> None:
+    said = []
+    written = claude.Sentences(said.append)
+    for chunk in ["Oh nice, congrats on Mochi! ", "How's she settling in?\nREMEMBER: Kunal has a kitten called Mr. ", "Mochi."]:
+        written.event({"type": "content_block_delta", "delta": {"type": "text_delta", "text": chunk}})
+    written.event({"type": "content_block_stop"})
+    assert said == ["Oh nice, congrats on Mochi!", "How's she settling in?"]  # not "Mochi." from inside the note
+
+
+def test_rigved_learns_and_claude_can_work_out_the_command_meant(monkeypatch) -> None:
+    from rigveda import notes
+
+    def reply(said, history, about, model, searching=lambda: None, sentence=None, noted=lambda k, t: None, notes="", **more):
+        if "orb" in said:
+            noted("DO", "start the orb")
+            noted("REMEMBER", "Kunal calls the orb 'the arc reactor'")
+            return ""
+        assert "the arc reactor" in notes  # what it learned comes back next time
+        return "Sure."
+
+    monkeypatch.setattr(claude, "reply", reply)
+    done = []
+    monkeypatch.setattr(actions, "understand", lambda command, config: done.append(command) or [actions.Step("time", "")])
+    config = Config(claude_model="sonnet")
+    reply_said = actions.carry_out([actions.Step("unknown", "I'm in the floating arc reactor orb")], config, log=lambda m: None)
+    assert done == ["start the orb"] and reply_said.startswith("It's")  # carried out, here
+    assert "arc reactor" in notes.described()
+    assert actions.carry_out([actions.Step("talk", "thanks")], config, log=lambda m: None) == "Sure."
+
+
+def test_rigved_remembers_a_note_once_and_forgets_on_request() -> None:
+    from rigveda import notes
+
+    notes.add("Kunal prefers VLC for films")
+    notes.add("Kunal prefers VLC for films.")
+    assert notes.described().count("VLC") == 1
+    assert notes.forget("that I prefer VLC") and notes.described() == ""

@@ -698,14 +698,14 @@ def make_handler(config: ServerConfig):
             self.end_headers()
             self.wfile.write(data)
 
-        def body(self) -> dict:
+        def body(self, most: int = 20_000) -> dict:
             """The JSON request body. Requiring the JSON content type means other web sites cannot post here:
             browsers must ask permission first for that, and this server never grants it."""
             if not self.headers.get("Content-Type", "").startswith("application/json"):
                 raise ValueError("Send JSON with Content-Type: application/json.")
             length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < length <= 20_000:
-                raise ValueError("Request must be between 1 and 20,000 bytes.")
+            if not 0 < length <= most:
+                raise ValueError(f"Request must be between 1 and {most:,} bytes.")
             payload = json.loads(self.rfile.read(length))
             if not isinstance(payload, dict):
                 raise ValueError("Send a JSON object.")
@@ -838,6 +838,12 @@ def make_handler(config: ServerConfig):
                 self.respond(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(error)})
 
         def do_GET(self) -> None:
+            if self.path == "/api/browser/next":
+                from .browser import RELAY
+
+                if self.trusted() and self.authorized():  # the extension, asking for something to do; held open
+                    self.respond(HTTPStatus.OK, RELAY.next())
+                return
             if not self.trusted():
                 return
             if self.path == "/api/suggest/status":
@@ -944,8 +950,32 @@ def make_handler(config: ServerConfig):
             finally:
                 con.close()
 
+        def browser_post(self) -> None:
+            """The browser relay (browser.py): the extension's answers, and the listener's commands for it. Both
+            hold the extension's token: what's on your pages never goes to anyone else."""
+            from .browser import RELAY
+
+            if not self.authorized():
+                return
+            try:
+                payload = self.body(most=400_000)
+            except (ValueError, json.JSONDecodeError) as error:
+                self.respond(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                return
+            if self.path == "/api/browser/seen":
+                RELAY.looked(payload)
+                self.respond(HTTPStatus.OK, {"ok": True})
+            elif self.path == "/api/browser/done":
+                RELAY.done(str(payload.get("id", "")), payload.get("result") if isinstance(payload.get("result"), dict) else {})
+                self.respond(HTTPStatus.OK, {"ok": True})
+            else:
+                self.respond(HTTPStatus.OK, RELAY.do(payload))
+
         def do_POST(self) -> None:
             if not self.trusted():
+                return
+            if self.path in ("/api/browser/done", "/api/browser/do", "/api/browser/seen"):
+                self.browser_post()
                 return
             if self.path == "/api/suggest":
                 if self.authorized():

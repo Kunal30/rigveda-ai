@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from rigveda import catalog, conversation, desk, llm, machine, names
+from rigveda import browser, catalog, conversation, desk, llm, machine, names, notes
 from rigveda.config import Config
 
 
@@ -13,6 +13,7 @@ def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Never read or write the real ~/.config/rigveda during tests."""
     monkeypatch.setenv("RIGVEDA_CONFIG", str(tmp_path / "config" / "config.toml"))
     monkeypatch.setattr(conversation, "PATH", tmp_path / "conversation.json")
+    monkeypatch.setattr(notes, "PATH", tmp_path / "notes.json")  # never what Rigved has learned about you
     monkeypatch.setattr(names, "ROOTS", (tmp_path / "home",))  # never your real files: a home of the test's own
     monkeypatch.setattr(names, "_read", (0.0, []))
 
@@ -54,6 +55,7 @@ def no_fact_model(monkeypatch: pytest.MonkeyPatch) -> None:
 def no_desktop(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests never look at or press anything on the real desktop."""
     monkeypatch.setattr(desk, "ask", lambda request, timeout=15.0: {"ok": False, "why": "no desktop in tests"})
+    monkeypatch.setattr(browser, "ask", lambda command, config=None: {"ok": False, "why": "not connected"})  # nor your Chrome
 
 
 @pytest.fixture(autouse=True)

@@ -21,6 +21,8 @@ from pathlib import Path
 
 TIMEOUT = 60  # seconds
 FILES = "FILES"  # Claude's reply when only the user's own documents could answer: they're searched here instead
+# Lines Claude adds for Rigved, never said: something to remember, to forget, or a command it worked out was meant.
+MARKER = re.compile(r"^\s*(REMEMBER|FORGET|DO):\s*(.+?)\s*$", re.M)
 LOCAL_BIN = Path.home() / ".local" / "bin" / "claude"  # where Claude Code installs itself; not on the services' PATH
 NEWS = re.compile(r"\b(?:news|headlines?|happening|going on)\b|\blatest (?:in|from|on|out of)\b", re.I)
 ABOUT_SEARCHING = re.compile(r"\b(?:search(?:es|ed)? results?|(?:source|citation)s? links?|add (?:source )?links|"
@@ -37,13 +39,31 @@ PLACES = {  # where a question asks about → the BBC feed for it; anything else
 WORKSPACE = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "rigveda-claude"  # empty, so no project's files or notes come along
 
 
+RIGVED = (
+    "About Rigved itself: it is also called Rigveda (speech recognition may write Rigvid or Rigved). It shows on screen "
+    "as the orb, a floating glowing circle like an arc reactor that opens into a chat; it listens through the listening "
+    "service and keeps their files searchable with the index. "
+    "Get what they mean the way a friend would, from the conversation and what you know of them, without making them "
+    "spell it out. When what they said asks Rigved to do something on the computer that hasn't been done (it was "
+    "misunderstood, or said loosely, like \"where's the orb?\" or \"I meant the orb\"), reply with only a line "
+    "DO: followed by the command, said plainly as Rigved understands commands, e.g. \"DO: start the orb\", "
+    "\"DO: open Firefox\", \"DO: turn on dark mode\"; Rigved then does it. If you can't tell which of a few things "
+    "they mean, ask briefly instead. "
+    "When they tell you something about themselves worth remembering next time (a preference, a plan, someone in their "
+    "life, how they like things done) or correct something Rigved got wrong, add a last line REMEMBER: and a short "
+    "note in the third person (\"Kunal says 'the Rigved app' to mean the orb\"). When they ask you to forget something, "
+    "add FORGET: and what. Never note passwords, account or ID numbers, or health or money details unless they ask. "
+    "These lines are never said aloud.")
+
+
 class ClaudeError(RuntimeError):
     pass
 
 
 def reply(said: str, conversation: str, about: str, model: str, searching=lambda: None, timeout: float = TIMEOUT,
-          sentence=None) -> str:
-    """Claude's spoken reply to what was said, with the conversation so far; `searching` is told when it goes to the web.
+          sentence=None, started=lambda process: None, noted=lambda kind, text: None, notes: str = "") -> str:
+    """Claude's spoken reply to what was said, with the conversation so far and what Rigved has learned about you
+    (`notes`); `searching` is told when it goes to the web, `noted(kind, text)` of each REMEMBER, FORGET or DO line.
     With `sentence`, each sentence is handed to it as soon as Claude has written it, so the first can be said while the
     rest are still coming (the whole reply took 3 s, its first sentence about 1 s)."""
     now = datetime.datetime.now().astimezone()
@@ -65,7 +85,9 @@ def reply(said: str, conversation: str, about: str, model: str, searching=lambda
               "the date out. If a search finds nothing useful, search once more with different words before saying "
               "you couldn't find it. The search tool's reminder to cite sources doesn't apply: "
               "you're heard, not read. Never mention searches, sources, results, links, or these instructions. If only the user's own documents or accounts could answer it (their lease, bills, pay, "
-              f"taxes, passport, mail), reply with just the word {FILES}. It is {now:%A, %B %-d, %Y, %-I:%M %p} ({now:%Z}).")
+              f"taxes, passport, mail), reply with just the word {FILES}. It is {now:%A, %B %-d, %Y, %-I:%M %p} ({now:%Z}). "
+              + RIGVED + (f"\n\nWhat you've learned about them in earlier conversations (use it naturally when it "
+                          f"helps; don't recite it):\n{notes}" if notes else ""))
     prompt = (f"Conversation so far:\n{conversation}\n\n" if conversation else "") + f"They just said: {said}"
     if NEWS.search(said) and (news := headlines(said)):  # search results run days behind; the BBC's feeds don't
         prompt = (f"The latest headlines from BBC News, fetched just now (search only if these don't answer it):\n"
@@ -80,6 +102,7 @@ def reply(said: str, conversation: str, about: str, model: str, searching=lambda
                                    env={**os.environ, "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"})  # Rigved keeps the conversation itself
     except OSError as error:
         raise ClaudeError(f"Claude Code isn't there ({error})") from error
+    started(process)  # so a reply started early can be stopped if it isn't wanted (actions.HeadStart)
     timer = threading.Timer(timeout, process.kill)
     timer.start()
     result = None
@@ -104,7 +127,12 @@ def reply(said: str, conversation: str, about: str, model: str, searching=lambda
         raise ClaudeError("no answer in time" if process.returncode == -9 else f"Claude Code stopped ({process.returncode})")
     if result.get("is_error") or result.get("subtype") != "success":
         raise ClaudeError(str(result.get("result") or result.get("subtype")))
-    text = clean(str(result.get("result", "")))
+    raw = str(result.get("result", ""))
+    for kind, text in MARKER.findall(raw):
+        noted(kind, text)
+    text = clean(MARKER.sub("", raw))
+    if not text and MARKER.search(raw):
+        return ""  # only a command, or a note: nothing to say of its own
     if not text:
         raise ClaudeError("an empty answer")
     return text
@@ -123,6 +151,7 @@ class Sentences:
 
     def __init__(self, told) -> None:
         self.told, self.text = told, ""
+        self.done = False  # past a REMEMBER, FORGET or DO line: those come last, and nothing after is said
 
     def event(self, event: dict, searching=lambda: None) -> None:
         kind = event.get("type")
@@ -140,7 +169,9 @@ class Sentences:
 
     def tell(self, part: str) -> None:
         part = re.sub(r"https?://\S+|[*_#`]", "", part).strip()
-        if part and part.rstrip(".") != FILES and not ABOUT_SEARCHING.search(part):
+        if re.match(r"(?:REMEMBER|FORGET|DO)\s*:", part):
+            self.done = True
+        if part and not self.done and part.rstrip(".") != FILES and not ABOUT_SEARCHING.search(part):
             self.told(part)
 
 

@@ -11,14 +11,16 @@ from __future__ import annotations
 import datetime
 import difflib
 import json
+import queue
 import random
 import re
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import conversation, names
+from . import conversation, names, notes
 from .config import Config
 
 WAKE_WORDS = ("rigved", "rigveda")
@@ -27,7 +29,7 @@ FILLERS = {"hey", "hi", "hello", "ok", "okay", "oh", "o", "ah", "uh", "um", "hmm
 VERBS = (r"(?:please\s+)?(?:open|launch|start|run|show(?:\s+me)?|go\s+to|bring\s+up|pause|play|resume|find|search|"
          r"google(?!\s+(?:chrome|drive|maps|docs|calendar|photos|music)))")
 KINDS = ("open", "find", "search", "ask", "talk", "time", "date", "volume", "media", "forget", "stop",
-         "app", "press", "setting", "power", "window", "screenshot", "type", "check", "do")
+         "app", "press", "setting", "power", "window", "screenshot", "type", "check", "do", "browse")
 DESKTOP = ("app", "press", "setting", "power", "window", "screenshot", "type")  # done through desk.py
 YES = re.compile(r"(?:(?:yes|yeah|yep|yup|sure|ok|okay|alright|confirm|absolutely|of course|please do|do it|go ahead|"
                  r"go for it)(?: |$))+(?:please|rigved|now)?")
@@ -187,8 +189,12 @@ def _rule(text: str) -> Step | None:
         return Step("media", "play")
     if re.fullmatch(r"(?:next|skip)(?: (?:song|track|video|one))?|play the next (?:song|track|video|one)", text):
         return Step("media", "next")
-    if re.fullmatch(r"(?:previous|go back)(?: (?:song|track|video|one))?|play the previous (?:song|track|video|one)", text):
+    if re.fullmatch(r"previous(?: (?:song|track|video|one))?|go back (?:a |one )?(?:song|track)|play the previous (?:song|track|video|one)", text):
         return Step("media", "previous")
+    from .browser import quick
+
+    if meant := quick(text):  # "scroll down a bit", "go back", "show numbers", "click 14": the browser, no model
+        return Step("browse", meant)
     if match := re.fullmatch(r"(?:search|google|look up)(?: the web| online| google)?(?: for)? (.+)", text):
         return Step("search", match.group(1))
     if match := re.fullmatch(r"(?:find|where is|where's|locate)(?: me)?(?: my| the| a)? (.+)", text):
@@ -228,12 +234,22 @@ do: change something about this computer that can be undone, other than a settin
 do also (Rigved asks before doing these): quit or force quit a program ("quit firefox", "kill what's using the most memory"), delete, trash or remove a file or folder by name (it goes to the Trash), move or rename a file ("move the trailer to documents" is one do step, not find then do), empty the Trash, install or uninstall software
 Deleting for good, wiping, formatting, and anything else needing sudo: unknown (target: ""), one step
 "undo that", "put it back", "change it back": setting "undo" (not forget)
+browse: something in the web browser's page or tabs ("focus on Chrome", "stop focusing" too): click a link or button by what it says ("click sign in", "the second result", "open the pricing page"), scroll, go back or forward, find words on the page, show numbers on what can be clicked, go to or close tabs ("go to my Gmail tab", "close the YouTube tabs"), say which tabs are open ("what tabs do I have open?": the target is that question, unchanged), reopen a closed tab, or type into the page (target: what to do, complete on its own). A new tab or window of the browser is app, not browse
 check: a question about this computer itself, answered by looking at it: disk space, memory, CPU, GPU, temperatures, battery, network, IP address, Wi-Fi, uptime, what's running or using resources, installed software and versions, updates, services, devices (target: the question, complete on its own)
 unknown: none of these fit (target: "")
+About Rigved itself (also written Rigveda or Rigvid): the orb is its floating circle on screen ("where's the orb", "bring the orb back", "open the Rigved app": do "start the orb"); "restart yourself" is do "restart the listening service", never the computer.
+When the user says Rigved got it wrong ("no, I meant…", "that's not what I asked") or says something loose about Rigved or the conversation, use talk with the whole message.
 Keep the user's order, and add no step that wasn't asked for. Reply with JSON only.
 """
 CATALOG_PROMPT = """Settings and apps on this computer that may be what the command means. To open an app, the target must be an app's name as given here, even when it was called something else: its maker, a nickname or what it does (e.g. "mozilla" is Firefox):
 {catalog}
+
+"""
+LOOKING_PROMPT = """The user is looking at Chrome, at "{page}", so they mean the browser: anything about what's on the screen (clicking or pressing something, "home", "unmute", scrolling or moving around, going to a site or a section, playing, pausing, skipping or muting the video, full screen) is browse, with the whole request as the target, even if they say "in Chrome". Opening an app, a file or a folder, and questions, are not.
+
+"""
+NOTES_PROMPT = """What Rigved has learned about the user, to understand what they mean:
+{notes}
 
 """
 CONTEXT_PROMPT = """What's on screen, to work out what the command is about ("close it", "a new one", "the file menu"):
@@ -255,6 +271,16 @@ def understand(command: str, config: Config) -> list[Step]:
             return [Step("yes", pending["thing"])]
         if NO.fullmatch(said):
             return [Step("cancel", pending.get("name", ""))]
+    from . import browser
+
+    looking = browser.looking(config)
+    if looking and (meant := browser.quick(command, looking=True)):
+        return [Step("browse", meant)]  # "a bit higher", with Chrome in front of you
+    if (shown := conversation.recent()[-1:]) and (shown[0].get("opened") or {}).get("kind") == "hints":
+        from .browser import number
+
+        if (n := number(" ".join(words(command)))) is not None:
+            return [Step("browse", f"=click {n}")]  # "fourteen", with the numbers on the page
     if (choices := conversation.choices()) and (picked := names.choose(command, choices)):
         app = (conversation.asking() or {}).get("app")
         return [Step("open", f"{picked} in {app}" if app else picked)]  # "the remastered one", after Rigved asked which
@@ -270,8 +296,11 @@ def understand(command: str, config: Config) -> list[Step]:
 
     from . import catalog
 
-    seen, near = on_screen(), catalog.offered(command, config)
-    prompt = (MODEL_PROMPT + (CATALOG_PROMPT.format(catalog=near) if near else "") + (CONTEXT_PROMPT.format(context=seen) if seen else "")
+    seen, near = on_screen(looking), catalog.offered(command, config)
+    learned = notes.described()
+    prompt = (MODEL_PROMPT + (LOOKING_PROMPT.format(page=looking) if looking else "")
+              + (NOTES_PROMPT.format(notes=learned) if learned else "")
+              + (CATALOG_PROMPT.format(catalog=near) if near else "") + (CONTEXT_PROMPT.format(context=seen) if seen else "")
               + (CONVERSATION_PROMPT.format(conversation=talked) if talked else "") + "Command: " + command)
     try:
         reply = llm.quick(config.ollama, config.model, prompt, timeout=60, format=MODEL_FORMAT)
@@ -285,6 +314,15 @@ def understand(command: str, config: Config) -> list[Step]:
         steps = [step for step in steps if step.kind not in ("volume", "media")] or [Step("talk", command)]
     if config.claude_model and not re.search(ASKED_TO_SEARCH, command.lower()):  # "the worst news in London today"
         steps = [Step("talk", command) if step.kind == "search" else step for step in steps]  # Claude looks it up
+    if looking:  # the window with the keyboard isn't the one you're looking at: buttons are on the page
+        def about_chrome(step: Step) -> bool:  # "click home in Chrome" came back as a new window, a switch and a press
+            target = step.target.lower()
+            return (step.kind == "press" or step.kind == "window" and "chrome" in target
+                    or step.kind == "app" and bool(re.match(r"(?:google )?chrome\b", target))
+                    and not re.search(r"\bnew (?:incognito )?(?:window|tab)\b", command.lower()))
+
+        if any(about_chrome(step) for step in steps):
+            steps = [Step("browse", command)] + [step for step in steps if not about_chrome(step)]
     steps = [Step("open", known_app(step.target, config) or step.target)
              if step.kind == "open" and not plain(step.target, config) else step for step in steps]
     return [step for step in steps if step.kind in KINDS] or [Step("unknown", command)]
@@ -378,6 +416,10 @@ def addressed(said: str, config: Config) -> bool:
     """Whether something you said was said to Rigved, rather than to someone else, another app or yourself."""
     if parse(said) is not None:  # a plain command: "pause", "open downloads"
         return True
+    from . import browser
+
+    if browser.quick(said) or (looking := browser.looking(config)) and browser.quick(said, looking=True):
+        return True  # "screw it up" is "scroll up"
     if (choices := conversation.choices()) and names.choose(said, choices):  # "the remastered one", after "which one?"
         return True
     if conversation.confirming() is not None and (YES.fullmatch(" ".join(words(said))) or NO.fullmatch(" ".join(words(said)))):
@@ -424,14 +466,16 @@ HIDDEN_APPS = {"gnome-shell", "gjs", "orb.py", "ibus-extension-gtk3", "update-no
                "xdg-desktop-portal-gtk", "mutter-x11-frames", "fdm"}
 
 
-def on_screen() -> str:
+def on_screen(looking: str = "") -> str:
     """What's on screen, for the model: the app in front, its window, what can be pressed in it, the apps open and
     what Rigved opened last. Window titles and menus go to the local model only."""
     from . import desk
 
     seen = desk.look()
     lines = []
-    if seen["app"]:
+    if looking:
+        lines.append(f"Where they're looking: Google Chrome, the page \"{looking[:100]}\" (the keyboard is with {app_name(seen['app']) or 'another window'})")
+    elif seen["app"]:
         lines.append(f"In front: {app_name(seen['app'])}, window \"{seen['window'][:100]}\"")
     if seen["controls"]:
         lines.append("What can be pressed there: " + ", ".join(seen["controls"][:40]))
@@ -907,7 +951,8 @@ def spoken_reply(config: Config, prompt: str) -> str:
 
     intro = (f"You are Rigved, the personal AI living in this computer, {about(config)}. You are being heard, "
              "not read: reply in one to three short sentences, with no lists, markdown, emoji or file paths. "
-             "Answer the latest message; never repeat an earlier reply.")
+             "Answer the latest message; never repeat an earlier reply."
+             + (f" What you've learned about them in earlier conversations:\n{notes.described()}" if notes.described() else ""))
     history = [{"role": "system", "content": intro}, *conversation.messages()]
     reply = llm.quick(config.ollama, config.model, prompt, timeout=120, history=history)
     return re.sub(r"<think>.*?</think>|[*_#`]", "", reply, flags=re.S).strip()
@@ -927,26 +972,103 @@ def answer(question: str, config: Config) -> str:
                                 "don't cover, answer it anyway, briefly.\n\n" + context + "\n\nQUESTION: " + question)
 
 
+COMMAND_WORDS = {"click", "scroll", "tab", "number", "open", "close", "turn", "switch", "set", "make", "start", "stop", "restart", "quit", "kill", "delete",
+                 "trash", "remove", "move", "rename", "install", "uninstall", "show", "hide", "play", "pause", "resume",
+                 "mute", "unmute", "connect", "disconnect", "put", "empty", "minimize", "maximize", "lock", "press", "type",
+                 "find", "search", "launch", "run", "change", "enable", "disable", "go", "take", "undo", "check"}
+
+
+class HeadStart:
+    """Claude, started on what was said while the local model is still working out what it is (0.5 s): if it's
+    conversation, the reply is already on its way; if it's a command, it's stopped. Never for what the rules
+    understand, a command, or anything about you ("my lease" is answered from your files and never leaves here)."""
+
+    END = object()
+
+    def __init__(self, said: str, config: Config) -> None:
+        from . import claude
+
+        self.said, self.parts, self.process = said, queue.Queue(), None
+        self.searched, self.stopped = threading.Event(), threading.Event()
+        self.on_search = lambda: None  # who to tell of a web search, once the reply is taken up
+        self.reply: str | None = None
+        self.error: Exception | None = None
+        self.noted: list[tuple[str, str]] = []  # REMEMBER, FORGET and DO lines, for talk()
+
+        def run() -> None:
+            try:
+                self.reply = claude.reply(said, conversation.transcript(public=True), about(config), config.claude_model,
+                                          self._searching, sentence=self.parts.put, started=self._started,
+                                          noted=lambda kind, text: self.noted.append((kind, text)), notes=notes.described())
+            except Exception as error:  # ClaudeError, or stopped
+                self.error = error
+            self.parts.put(self.END)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _searching(self) -> None:
+        self.searched.set()
+        self.on_search()
+
+    def _started(self, process) -> None:
+        self.process = process
+        if self.stopped.is_set():
+            process.kill()
+
+    def stop(self) -> None:
+        """Not wanted after all (or finished): end it."""
+        self.stopped.set()
+        if self.process is not None and self.process.poll() is None:
+            self.process.kill()
+
+    @classmethod
+    def maybe(cls, said: str, config: Config) -> "HeadStart | None":
+        first = (words(said) or [""])[0]
+        if (not config.claude_model or personal(said) or first in COMMAND_WORDS or parse(said) is not None
+                or conversation.asking() is not None):
+            return None
+        return cls(said, config)
+
+
 def talk(said: str, config: Config, log=print, searching=lambda: None, private: list | None = None,
-         sentence=None) -> str:
+         sentence=None, head: HeadStart | None = None, act=None) -> str:
     """A reply in character: from Claude when it's set up (see claude.py), else, or if Claude can't be had, locally.
     Claude hands back what only your files can answer, and they're searched here (and `private` is told). Claude
-    hears the conversation without the turns answered from your files. With `sentence`, Claude's reply is handed to it
-    sentence by sentence as it's written; what's returned is then what was said."""
+    hears the conversation without the turns answered from your files, and what Rigved has learned about you. With
+    `sentence`, Claude's reply is handed to it sentence by sentence as it's written; what's returned is then what was
+    said. When Claude works out that a command was meant ("where's the orb?" → start the orb), `act(command)` does it
+    and its reply is Rigved's."""
     if config.claude_model:
         from . import claude
 
         told: list[str] = []
+        noted: list[tuple[str, str]] = []
 
         def tell(part: str) -> None:
             told.append(part)
             sentence(part)
 
         try:
-            reply = claude.reply(said, conversation.transcript(public=True), about(config), config.claude_model,
-                                 searching, sentence=tell if sentence else None)
+            if head is not None:  # already on its way: say what it has written, then the rest as it comes
+                head.on_search = searching
+                if head.searched.is_set():
+                    searching()
+                for part in iter(head.parts.get, HeadStart.END):
+                    if sentence:
+                        tell(part)
+                if head.error is not None:
+                    raise head.error if isinstance(head.error, claude.ClaudeError) else claude.ClaudeError(str(head.error))
+                reply, noted = head.reply or "", head.noted
+            else:
+                reply = claude.reply(said, conversation.transcript(public=True), about(config), config.claude_model,
+                                     searching, sentence=tell if sentence else None,
+                                     noted=lambda kind, text: noted.append((kind, text)), notes=notes.described())
+            meant = learn(noted, log)
+            if meant and act is not None and not told:
+                log(f"Claude worked out what was meant: {meant!r}")
+                return act(meant)
             if reply != claude.FILES:
-                return " ".join(told) or reply
+                return " ".join(told) or reply or line(config, "done")
             if private is not None:
                 private.append(True)
             return answer(said, config)
@@ -956,6 +1078,20 @@ def talk(said: str, config: Config, log=print, searching=lambda: None, private: 
                 return " ".join(told)
             log(f"Claude couldn't answer ({error}); answering locally.")
     return spoken_reply(config, "They said: " + said)
+
+
+def learn(noted: list[tuple[str, str]], log=print) -> str:
+    """Keep what Claude noted to remember or forget (notes.py); the command it worked out was meant, if any."""
+    meant = ""
+    for kind, text in noted:
+        if kind == "REMEMBER":
+            notes.add(text)
+            log(f"Learned: {text}")
+        elif kind == "FORGET":
+            log(f"Forgot: {text}" if notes.forget(text) else f"Nothing to forget about: {text}")
+        elif kind == "DO" and not meant:
+            meant = text.strip().strip('"')
+    return meant
 
 
 FIRST_PERSON = {"i", "i'm", "i've", "i'd", "i'll", "my", "mine", "myself", "our", "ours", "we", "we're", "us"}
@@ -979,10 +1115,15 @@ def spoken_name(name: str) -> str:
 
 
 def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = False, opened: list[dict] | None = None,
-              searching=lambda: None, private: list | None = None, sentence=None, confirmed: bool = False) -> str:
+              searching=lambda: None, private: list | None = None, sentence=None, confirmed: bool = False,
+              head: HeadStart | None = None, relayed: bool = False) -> str:
     """Do each step and return what Rigved says about it all. What it opens is added to `opened`, for "open it" later;
     `searching` is told when an answer has to wait on the web, `private` when one came from your files. With
     `sentence`, a reply that is all Claude's is handed to it sentence by sentence as it's written."""
+
+    def relay(command: str) -> str:  # what Claude worked out was meant: carried out here, once (no asking Claude again)
+        return carry_out(understand(command, config), config, log, dry_run, opened, searching, private, relayed=True)
+
     private = [] if private is None else private
     opened = [] if opened is None else opened
     said: list[str] = []
@@ -991,8 +1132,14 @@ def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = Fals
     for step in steps:
         if step.kind == "stop":
             return line(config, "bye")
-        if step.kind == "unknown" and meaningful(step.target) and len(words(step.target)) > 1:
-            said.append(line(config, "cant"))  # heard it fine; it's something Rigved can't do yet ("reboot the system")
+        if step.kind == "unknown" and meaningful(step.target) and len(words(step.target)) > 1 and config.claude_model \
+                and not relayed:
+            # heard fine, but what's meant isn't clear here ("I'm in the floating orb"): Claude, with the
+            # conversation, gets what was meant, says it, or works out the command to carry out
+            said.append(talk(step.target, config, log, searching, private, sentence if len(steps) == 1 else None,
+                             head if len(steps) == 1 else None, act=relay) if not dry_run else "(a reply in character)")
+        elif step.kind == "unknown" and meaningful(step.target) and len(words(step.target)) > 1:
+            said.append(line(config, "cant"))  # heard it fine; it's something Rigved can't do yet
         elif step.kind == "unknown" or (not step.target and step.kind in ("open", "find", "search", "ask", "talk", "volume", "media")):
             said.append(line(config, "unsure"))
         elif step.kind == "time":
@@ -1066,7 +1213,8 @@ def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = Fals
             private.append(True)
             said.append(answer(step.target, config) if not dry_run else "(an answer from your files)")
         elif step.kind in ("ask", "talk"):  # a question about the world rather than you goes to Claude, when it's set up
-            said.append(talk(step.target, config, log, searching, private, sentence if len(steps) == 1 else None)
+            said.append(talk(step.target, config, log, searching, private, sentence if len(steps) == 1 else None,
+                             head if len(steps) == 1 else None, act=None if relayed else relay)
                         if not dry_run else "(a reply in character)")
         elif step.kind == "volume":
             if not dry_run and not volume(step.target):
@@ -1097,6 +1245,13 @@ def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = Fals
 
             private.append(True)
             said.append(machine.check(step.target, config, log) if not dry_run else "(what the computer says)")
+        elif step.kind == "browse":  # through Rigveda's extension in Chrome (browser.py)
+            from . import browser
+
+            ok, reply = browser.browse(step.target, config, log, opened, confirmed) if not dry_run else (True, "(done)")
+            if reply:  # a scroll or "go back" you see happen: nothing to say
+                said.append(reply)
+            done, failed = done or ok, failed or not ok
         elif step.kind == "do":
             from . import machine
 
@@ -1107,7 +1262,7 @@ def carry_out(steps: list[Step], config: Config, log=print, dry_run: bool = Fals
             ok, reply = on_desktop(step, config, log, dry_run, confirmed, opened)
             said.append(reply)
             done, failed = done or ok, failed or not ok
-    if done and not failed and not said and all(step.kind in ("media", "volume") for step in steps):
+    if done and not failed and not said and all(step.kind in ("media", "volume", "browse") for step in steps):
         return ""  # pausing a film or turning it up needs no words over it, just the tone
     if done and not failed and config.persona == "sage":  # "Tathaastu" before the news; the witty one just gets on with it
         said.insert(0, line(config, "done"))
